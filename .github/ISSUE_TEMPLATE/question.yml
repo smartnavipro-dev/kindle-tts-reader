@@ -1,0 +1,80 @@
+name: ❓ Question
+description: Ask a question about Kindle TTS Reader
+title: "[QUESTION] "
+labels: ["question", "help-wanted"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have a question about using Kindle TTS Reader? We're here to help!
+
+        **Before asking:** Please check our [README](../../README.md) and [FAQ section](../../README.md#-faq) first.
+
+  - type: checkboxes
+    id: search
+    attributes:
+      label: I have checked existing resources
+      description: Please confirm you've checked these resources first
+      options:
+        - label: I have read the README file
+          required: true
+        - label: I have checked the FAQ section
+          required: true
+        - label: I have searched existing issues and discussions
+          required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Question Category
+      description: What is your question about?
+      options:
+        - Setup and Installation
+        - Permissions and Configuration
+        - Using with Kindle App
+        - OCR/Text Recognition
+        - Text-to-Speech Settings
+        - Auto Page Turn Feature
+        - Troubleshooting
+        - Performance and Optimization
+        - Compatibility Issues
+        - Development and Contributing
+        - Legal and Privacy
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Your Question
+      description: What would you like to know?
+      placeholder: Please be as specific as possible with your question
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Provide any additional context that might help us answer your question
+      placeholder: |
+        For example:
+        - What you're trying to achieve
+        - What you've already tried
+        - Any error messages you're seeing
+        - Your device and Android version
+
+  - type: input
+    id: android_version
+    attributes:
+      label: Android Version (if relevant)
+      description: What version of Android are you using?
+      placeholder: e.g., Android 12
+
+  - type: input
+    id: device
+    attributes:
+      label: Device (if relevant)
+      description: What device are you using?
+      placeholder: e.g., Samsung Galaxy S23

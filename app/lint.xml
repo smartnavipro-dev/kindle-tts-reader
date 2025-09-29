@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- Accessibility Service権限は一般アプリでも使用可能（ユーザーが手動で有効化） -->
+    <issue id="ProtectedPermissions">
+        <ignore path="src/main/AndroidManifest.xml" />
+    </issue>
+
+    <!-- API 24以上で使用されるgesture関連の属性を無視 -->
+    <issue id="UnusedAttribute">
+        <ignore path="src/main/res/xml/accessibility_service_config.xml" />
+    </issue>
+
+    <!-- 未使用リソースの警告を抑制（将来の拡張用） -->
+    <issue id="UnusedResources">
+        <ignore />
+    </issue>
+
+    <!-- 古いバージョンでの下位互換性のための警告を抑制 -->
+    <issue id="OldTargetApi">
+        <ignore />
+    </issue>
+</lint>
