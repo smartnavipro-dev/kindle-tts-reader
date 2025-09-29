@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Kindle TTS Reader</string>
+
+    <!-- メイン画面 -->
+    <string name="start_reading">読み上げ開始</string>
+    <string name="stop_reading">読み上げ停止</string>
+    <string name="pause_reading">一時停止</string>
+    <string name="resume_reading">再開</string>
+    <string name="next_page">次のページ</string>
+    <string name="previous_page">前のページ</string>
+
+    <!-- 設定 -->
+    <string name="reading_speed">読み上げ速度</string>
+    <string name="auto_page_turn">自動ページめくり</string>
+    <string name="permissions_required">権限設定</string>
+    <string name="screen_capture_permission">画面キャプチャ権限</string>
+    <string name="accessibility_permission">アクセシビリティ権限</string>
+
+    <!-- ステータス -->
+    <string name="status_ready">準備完了</string>
+    <string name="status_reading">読み上げ中</string>
+    <string name="status_paused">一時停止中</string>
+    <string name="status_processing">処理中...</string>
+
+    <!-- エラーメッセージ -->
+    <string name="error_permission_required">必要な権限が許可されていません</string>
+    <string name="error_ocr_failed">OCR処理に失敗しました</string>
+    <string name="error_tts_failed">音声合成に失敗しました</string>
+    <string name="error_page_turn_failed">ページめくりに失敗しました</string>
+
+    <!-- 通知 -->
+    <string name="notification_reading">Kindle読み上げ中...</string>
+
+    <!-- アクセシビリティサービス -->
+    <string name="accessibility_service_description">Kindle読み上げ機能を有効にします。Kindleアプリで自動ページめくりを行います。</string>
+</resources>

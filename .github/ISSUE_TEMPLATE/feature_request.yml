@@ -1,0 +1,107 @@
+name: 💡 Feature Request
+description: Suggest a new feature or enhancement for Kindle TTS Reader
+title: "[FEATURE] "
+labels: ["enhancement", "feature-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for suggesting a feature! We appreciate your ideas for improving Kindle TTS Reader.
+
+  - type: checkboxes
+    id: search
+    attributes:
+      label: Search for existing requests
+      description: Please search for existing feature requests before creating a new one
+      options:
+        - label: I have searched for existing feature requests
+          required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Feature Category
+      description: What type of feature are you requesting?
+      options:
+        - OCR/Text Recognition Enhancement
+        - TTS/Voice Enhancement
+        - UI/UX Improvement
+        - New Language Support
+        - Performance Optimization
+        - Integration (ePub, PDF, etc.)
+        - Accessibility Feature
+        - Settings/Customization
+        - Reading Statistics
+        - Cloud/Sync Features
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Feature Summary
+      description: Provide a brief summary of the feature you'd like to see
+      placeholder: A clear and concise description of what you want to happen
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem/Use Case
+      description: What problem would this feature solve? What's your use case?
+      placeholder: Describe the problem or use case that motivated this request
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe how you envision this feature working
+      placeholder: A detailed description of the solution you'd like to see
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternative Solutions
+      description: Have you considered any alternative solutions or workarounds?
+      placeholder: Describe any alternative solutions or features you've considered
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How important is this feature to you?
+      options:
+        - Critical (blocking my usage)
+        - High (would significantly improve my experience)
+        - Medium (would be nice to have)
+        - Low (minor improvement)
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: implementation
+    attributes:
+      label: Implementation Willingness
+      description: Are you willing to help implement this feature?
+      options:
+        - label: I'd be willing to implement this feature myself
+        - label: I can help with testing this feature
+        - label: I can help with documentation for this feature
+
+  - type: textarea
+    id: mockups
+    attributes:
+      label: Mockups/Examples
+      description: If applicable, add mockups, screenshots, or examples
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Add any other context, screenshots, or examples about the feature request here

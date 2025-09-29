@@ -1,0 +1,147 @@
+name: 🐛 Bug Report
+description: Report a bug or issue with Kindle TTS Reader
+title: "[BUG] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a bug! Please provide as much detail as possible to help us resolve the issue quickly.
+
+  - type: checkboxes
+    id: search
+    attributes:
+      label: Search for existing issues
+      description: Please search for existing issues before creating a new one
+      options:
+        - label: I have searched for existing issues
+          required: true
+
+  - type: input
+    id: app_version
+    attributes:
+      label: App Version
+      description: Which version of Kindle TTS Reader are you using?
+      placeholder: e.g., v1.0.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: android_version
+    attributes:
+      label: Android Version
+      description: What version of Android are you running?
+      options:
+        - Android 14 (API 34)
+        - Android 13 (API 33)
+        - Android 12 (API 31-32)
+        - Android 11 (API 30)
+        - Android 10 (API 29)
+        - Android 9 (API 28)
+        - Android 8 (API 26-27)
+        - Android 7 (API 24-25)
+        - Android 6 (API 23)
+        - Android 5 (API 21-22)
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: Device Information
+      description: What device are you using?
+      placeholder: e.g., Samsung Galaxy S23, Google Pixel 7, etc.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: bug_category
+    attributes:
+      label: Bug Category
+      description: What type of issue are you experiencing?
+      options:
+        - OCR (Text Recognition) Issue
+        - TTS (Text-to-Speech) Issue
+        - Auto Page Turn Issue
+        - Overlay UI Issue
+        - Permission/Setup Issue
+        - App Crash/Freeze
+        - Performance Issue
+        - Kindle App Integration
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: Provide a clear and detailed description of the bug
+      placeholder: Describe what happened and what you expected to happen
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: List the steps to reproduce the issue
+      placeholder: |
+        1. Open Kindle TTS Reader
+        2. Tap 'Start Reading'
+        3. Switch to Kindle app
+        4. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+      placeholder: Describe the expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened?
+      placeholder: Describe what actually happened
+    validations:
+      required: true
+
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: How often does this happen?
+      options:
+        - Always
+        - Often (more than 50% of the time)
+        - Sometimes (less than 50% of the time)
+        - Rarely
+        - Once
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error Logs
+      description: |
+        If available, paste any error logs or crash reports here.
+        You can get logs using: adb logcat -s KindleTTS_Service KindleTTS_AutoPageTurn KindleTTS_Main
+      render: shell
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: If applicable, add screenshots to help explain the problem
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Add any other context about the problem here
