@@ -26,8 +26,20 @@
         android:orientation="horizontal"
         android:gravity="center">
 
+        <!-- 前ページボタン -->
         <ImageView
-            android:id="@+id/btnCaptureOverlay"
+            android:id="@+id/btnPreviousPage"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@color/teal_700"
+            android:padding="8dp"
+            android:layout_margin="4dp"
+            android:src="@android:drawable/ic_media_previous"
+            android:contentDescription="前のページ" />
+
+        <!-- 再生/一時停止ボタン -->
+        <ImageView
+            android:id="@+id/btnPlayPause"
             android:layout_width="40dp"
             android:layout_height="40dp"
             android:background="@color/purple_500"
@@ -36,8 +48,9 @@
             android:src="@android:drawable/ic_media_play"
             android:contentDescription="再生/一時停止" />
 
+        <!-- 次ページボタン -->
         <ImageView
-            android:id="@+id/btnSpeakOverlay"
+            android:id="@+id/btnNextPage"
             android:layout_width="40dp"
             android:layout_height="40dp"
             android:background="@color/teal_700"
@@ -46,6 +59,7 @@
             android:src="@android:drawable/ic_media_next"
             android:contentDescription="次のページ" />
 
+        <!-- 閉じるボタン -->
         <ImageView
             android:id="@+id/btnCloseOverlay"
             android:layout_width="40dp"

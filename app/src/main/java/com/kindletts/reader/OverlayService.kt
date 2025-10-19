@@ -225,27 +225,65 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
 
     private fun setupOverlayButtons() {
         overlayView?.let { view ->
-            val btnReading = view.findViewById<ImageView>(R.id.btnCaptureOverlay)
-            val btnNext = view.findViewById<ImageView>(R.id.btnSpeakOverlay)
+            // ボタンの取得
+            val btnPrevious = view.findViewById<ImageView>(R.id.btnPreviousPage)
+            val btnPlayPause = view.findViewById<ImageView>(R.id.btnPlayPause)
+            val btnNext = view.findViewById<ImageView>(R.id.btnNextPage)
             val btnClose = view.findViewById<ImageView>(R.id.btnCloseOverlay)
 
-            btnReading.setOnClickListener {
-                if (isReading) {
-                    if (isPaused) resumeReading() else pauseReading()
-                } else {
-                    manualCapture()
-                }
+            // 前ページボタン
+            btnPrevious?.setOnClickListener {
+                debugLog("Previous page button clicked")
+                previousPage()
             }
 
-            btnNext.setOnClickListener {
+            // 再生/一時停止ボタン
+            btnPlayPause?.setOnClickListener {
+                debugLog("Play/Pause button clicked", "isReading: $isReading, isPaused: $isPaused")
+
+                if (!isReading) {
+                    // 読み上げ開始
+                    startReading()
+                } else {
+                    // 一時停止/再開
+                    if (isPaused) {
+                        resumeReading()
+                    } else {
+                        pauseReading()
+                    }
+                }
+
+                // ボタンアイコン更新
+                updatePlayPauseButton()
+            }
+
+            // 次ページボタン
+            btnNext?.setOnClickListener {
+                debugLog("Next page button clicked")
                 nextPage()
             }
 
-            btnClose.setOnClickListener {
+            // 閉じるボタン
+            btnClose?.setOnClickListener {
+                debugLog("Close button clicked")
                 stopSelf()
             }
 
             updateOverlayUI()
+            updatePlayPauseButton()
+        }
+    }
+
+    private fun updatePlayPauseButton() {
+        overlayView?.let { view ->
+            val btnPlayPause = view.findViewById<ImageView>(R.id.btnPlayPause)
+            btnPlayPause?.setImageResource(
+                if (isReading && !isPaused) {
+                    android.R.drawable.ic_media_pause  // 一時停止アイコン
+                } else {
+                    android.R.drawable.ic_media_play   // 再生アイコン
+                }
+            )
         }
     }
 
@@ -299,6 +337,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
 
         updateNotification("読み上げ中...")
         updateOverlayUI()
+        updatePlayPauseButton()
 
         // 自動OCR開始
         startAutoOCR()
@@ -317,6 +356,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
 
         updateNotification("読み上げ停止")
         updateOverlayUI()
+        updatePlayPauseButton()
     }
 
     private fun pauseReading() {
@@ -330,6 +370,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
 
         updateNotification("一時停止中")
         updateOverlayUI()
+        updatePlayPauseButton()
     }
 
     private fun resumeReading() {
@@ -340,6 +381,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
 
         updateNotification("読み上げ中...")
         updateOverlayUI()
+        updatePlayPauseButton()
 
         // 現在の文から再開
         if (currentSentenceIndex < currentSentences.size) {
@@ -444,43 +486,46 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
      */
     private fun preprocessBitmapForOCR(bitmap: Bitmap): Bitmap {
         try {
-            // 新しいBitmapを作成
             val width = bitmap.width
             val height = bitmap.height
-            val processedBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
 
+            // Step 1: 1.5倍拡大（ML Kitは高解像度でOCR精度向上）
+            val targetWidth = (width * 1.5).toInt()
+            val targetHeight = (height * 1.5).toInt()
+            val scaledBitmap = Bitmap.createScaledBitmap(bitmap, targetWidth, targetHeight, true)
+
+            // Step 2: グレースケール + コントラスト強化
+            val processedBitmap = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(processedBitmap)
             val paint = Paint()
 
-            // コントラスト強化用のColorMatrix
-            val contrastMatrix = ColorMatrix(floatArrayOf(
-                1.5f, 0f, 0f, 0f, -50f,  // Red: コントラスト1.5倍、明度-50
-                0f, 1.5f, 0f, 0f, -50f,   // Green
-                0f, 0f, 1.5f, 0f, -50f,   // Blue
-                0f, 0f, 0f, 1f, 0f        // Alpha
-            ))
+            // グレースケール変換
+            val grayscaleMatrix = ColorMatrix()
+            grayscaleMatrix.setSaturation(0f)
 
-            // シャープネスフィルター用のColorMatrix（簡易版）
-            val sharpnessMatrix = ColorMatrix(floatArrayOf(
-                1.5f, -0.25f, -0.25f, 0f, 0f,
-                -0.25f, 1.5f, -0.25f, 0f, 0f,
-                -0.25f, -0.25f, 1.5f, 0f, 0f,
+            // コントラストを強化（テキストを明確に）
+            val contrastMatrix = ColorMatrix(floatArrayOf(
+                2.5f, 0f, 0f, 0f, -180f,  // 高コントラスト
+                0f, 2.5f, 0f, 0f, -180f,
+                0f, 0f, 2.5f, 0f, -180f,
                 0f, 0f, 0f, 1f, 0f
             ))
 
-            // コントラストとシャープネスを合成
-            contrastMatrix.postConcat(sharpnessMatrix)
+            grayscaleMatrix.postConcat(contrastMatrix)
+            paint.colorFilter = ColorMatrixColorFilter(grayscaleMatrix)
+            canvas.drawBitmap(scaledBitmap, 0f, 0f, paint)
 
-            paint.colorFilter = ColorMatrixColorFilter(contrastMatrix)
-            canvas.drawBitmap(bitmap, 0f, 0f, paint)
+            debugLog("Image preprocessing", "Scaled: ${targetWidth}x${targetHeight}, Grayscale + High contrast applied")
 
-            debugLog("Image preprocessing", "Applied contrast & sharpness enhancement")
+            // メモリ解放
+            if (scaledBitmap != bitmap) {
+                scaledBitmap.recycle()
+            }
 
             return processedBitmap
 
         } catch (e: Exception) {
             debugLog("Image preprocessing failed", e.message)
-            // 前処理失敗時は元の画像を返す
             return bitmap
         }
     }
