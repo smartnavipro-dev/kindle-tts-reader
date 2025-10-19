@@ -216,11 +216,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private fun requestScreenCapturePermission() {
         debugLog("Requesting screen capture permission")
 
+        // オーバーレイ権限が無い場合は先にそれを要求
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            showToast("オーバーレイ権限を先に許可してください")
             requestOverlayPermission()
             return
         }
 
+        // MediaProjection権限ダイアログを表示
         mediaProjectionManager?.let { manager ->
             val captureIntent = manager.createScreenCaptureIntent()
             screenCapturePermissionLauncher.launch(captureIntent)
@@ -255,7 +258,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         intent.putExtra("auto_page_turn", autoPageTurnEnabled)
         startService(intent)
 
-        updateUIState()
+        // OverlayServiceが起動するまで少し待ってからUIを更新
+        binding.root.postDelayed({
+            updatePermissionButtonStates()
+            updateUIState()
+        }, 500)
     }
 
     private fun checkAllPermissions(): Boolean {
@@ -268,8 +275,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val enabledServices = Settings.Secure.getString(
             contentResolver,
             Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-        )
-        return enabledServices?.contains(expectedComponentName) == true
+        ) ?: ""
+
+        debugLog("Checking accessibility service - Expected: $expectedComponentName, Enabled: $enabledServices")
+
+        // サービス名は {{...}} で囲まれることがあるため、より柔軟に検索
+        return enabledServices.contains(expectedComponentName) ||
+               enabledServices.contains("${packageName}/.AutoPageTurnService")
     }
 
     private fun checkAccessibilityServiceEnabled() {
@@ -281,15 +293,22 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private fun updatePermissionButtonStates() {
         // オーバーレイ権限状態
         val overlayGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this)
-        binding.btnScreenCapture.text = if (overlayGranted) "画面キャプチャ権限 ✓" else "画面キャプチャ権限"
-        binding.btnScreenCapture.isEnabled = !overlayGranted
+
+        // 画面キャプチャ権限ボタン: OverlayServiceが動いているかどうかで判定
+        val screenCaptureGranted = OverlayService.isRunning
+        binding.btnScreenCapture.text = if (overlayGranted) {
+            if (screenCaptureGranted) "画面キャプチャ準備完了 ✓" else "画面キャプチャを開始"
+        } else {
+            "オーバーレイ権限が必要"
+        }
+        binding.btnScreenCapture.isEnabled = overlayGranted && !screenCaptureGranted
 
         // アクセシビリティ権限状態
         val accessibilityEnabled = isAccessibilityServiceEnabled()
         binding.btnAccessibility.text = if (accessibilityEnabled) "アクセシビリティ権限 ✓" else "アクセシビリティ権限"
         binding.btnAccessibility.isEnabled = !accessibilityEnabled
 
-        debugLog("Permission states - Overlay: $overlayGranted, Accessibility: $accessibilityEnabled")
+        debugLog("Permission states - Overlay: $overlayGranted, ScreenCapture: $screenCaptureGranted, Accessibility: $accessibilityEnabled")
     }
 
     private fun updateUIState() {
@@ -351,18 +370,23 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
-            val result = textToSpeech!!.setLanguage(Locale.JAPANESE)
-            when (result) {
-                TextToSpeech.LANG_MISSING_DATA, TextToSpeech.LANG_NOT_SUPPORTED -> {
-                    debugLog("Japanese TTS not supported, trying English")
-                    textToSpeech!!.setLanguage(Locale.ENGLISH)
+            textToSpeech?.let { tts ->
+                val result = tts.setLanguage(Locale.JAPANESE)
+                when (result) {
+                    TextToSpeech.LANG_MISSING_DATA, TextToSpeech.LANG_NOT_SUPPORTED -> {
+                        debugLog("Japanese TTS not supported, trying English")
+                        tts.setLanguage(Locale.ENGLISH)
+                    }
+                    else -> {
+                        debugLog("TTS initialized successfully with Japanese")
+                    }
                 }
-                else -> {
-                    debugLog("TTS initialized successfully with Japanese")
-                }
+                applyTTSSettings()
+                updateStatusText("準備完了")
+            } ?: run {
+                debugLog("TTS object is null after successful init")
+                updateStatusText("TTS初期化エラー")
             }
-            applyTTSSettings()
-            updateStatusText("準備完了")
         } else {
             debugLog("TTS initialization failed")
             updateStatusText("TTS初期化に失敗しました")
@@ -373,6 +397,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         super.onResume()
         updatePermissionButtonStates()
         checkAccessibilityServiceEnabled()
+        updateUIState()  // ✅ FIX: Update UI state after checking permissions
     }
 
     override fun onDestroy() {

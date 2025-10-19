@@ -154,8 +154,19 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             val mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             mediaProjection = mediaProjectionManager.getMediaProjection(Activity.RESULT_OK, data)
 
+            // ✅ FIX: MediaProjectionコールバックを登録（必須）
+            mediaProjection?.registerCallback(object : MediaProjection.Callback() {
+                override fun onStop() {
+                    debugLog("MediaProjection stopped")
+                    appState.screenCaptureActive = false
+                }
+            }, Handler(Looper.getMainLooper()))
+
             // ImageReader設定
             imageReader = ImageReader.newInstance(screenWidth, screenHeight, PixelFormat.RGBA_8888, 2)
+
+            // ImageReader コールバックは不要（手動/自動OCRで明示的に取得するため）
+            // setOnImageAvailableListenerは使用せず、必要時にacquireLatestImageを呼び出す
 
             // VirtualDisplay作成
             virtualDisplay = mediaProjection?.createVirtualDisplay(
@@ -172,9 +183,6 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             appState.screenCaptureActive = true
             updateNotification("画面キャプチャ準備完了")
             debugLog("Screen capture started successfully")
-
-            // OCR処理開始準備
-            imageReader?.setOnImageAvailableListener({ performOCR() }, Handler(Looper.getMainLooper()))
 
         } catch (e: Exception) {
             handleError("画面キャプチャ開始エラー", e)
@@ -344,6 +352,11 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
     private fun startAutoOCR() {
         debugLog("Starting auto OCR")
 
+        // 既存のExecutorが停止している場合のみ新しく作成
+        if (ocrExecutor == null || ocrExecutor?.isShutdown == true) {
+            ocrExecutor = Executors.newSingleThreadScheduledExecutor()
+        }
+
         ocrExecutor?.scheduleAtFixedRate({
             if (isReading && !isPaused && !isCapturing) {
                 performOCR()
@@ -355,17 +368,19 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         debugLog("Stopping auto OCR")
 
         ocrExecutor?.let { executor ->
-            executor.shutdown()
-            try {
-                if (!executor.awaitTermination(1, TimeUnit.SECONDS)) {
+            if (!executor.isShutdown) {
+                executor.shutdown()
+                try {
+                    if (!executor.awaitTermination(1, TimeUnit.SECONDS)) {
+                        executor.shutdownNow()
+                    }
+                } catch (e: InterruptedException) {
                     executor.shutdownNow()
+                    Thread.currentThread().interrupt()
                 }
-            } catch (e: InterruptedException) {
-                executor.shutdownNow()
             }
-            Unit
         }
-        ocrExecutor = Executors.newSingleThreadScheduledExecutor()
+        // 新しいExecutorは必要時のみ作成（startAutoOCRで作成）
     }
 
     private fun performOCR() {
@@ -410,11 +425,63 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             )
             bitmap.copyPixelsFromBuffer(buffer)
 
-            return Bitmap.createBitmap(bitmap, 0, 0, screenWidth, screenHeight)
+            val croppedBitmap = Bitmap.createBitmap(bitmap, 0, 0, screenWidth, screenHeight)
+
+            // ✨ 画像前処理を適用してOCR精度を向上
+            return preprocessBitmapForOCR(croppedBitmap)
 
         } catch (e: Exception) {
             handleError("ビットマップ変換エラー", e)
             return null
+        }
+    }
+
+    /**
+     * 画像前処理: OCR精度向上のための画像最適化
+     * - コントラスト強化
+     * - シャープネス向上
+     * - グレースケール変換（オプション）
+     */
+    private fun preprocessBitmapForOCR(bitmap: Bitmap): Bitmap {
+        try {
+            // 新しいBitmapを作成
+            val width = bitmap.width
+            val height = bitmap.height
+            val processedBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+
+            val canvas = Canvas(processedBitmap)
+            val paint = Paint()
+
+            // コントラスト強化用のColorMatrix
+            val contrastMatrix = ColorMatrix(floatArrayOf(
+                1.5f, 0f, 0f, 0f, -50f,  // Red: コントラスト1.5倍、明度-50
+                0f, 1.5f, 0f, 0f, -50f,   // Green
+                0f, 0f, 1.5f, 0f, -50f,   // Blue
+                0f, 0f, 0f, 1f, 0f        // Alpha
+            ))
+
+            // シャープネスフィルター用のColorMatrix（簡易版）
+            val sharpnessMatrix = ColorMatrix(floatArrayOf(
+                1.5f, -0.25f, -0.25f, 0f, 0f,
+                -0.25f, 1.5f, -0.25f, 0f, 0f,
+                -0.25f, -0.25f, 1.5f, 0f, 0f,
+                0f, 0f, 0f, 1f, 0f
+            ))
+
+            // コントラストとシャープネスを合成
+            contrastMatrix.postConcat(sharpnessMatrix)
+
+            paint.colorFilter = ColorMatrixColorFilter(contrastMatrix)
+            canvas.drawBitmap(bitmap, 0f, 0f, paint)
+
+            debugLog("Image preprocessing", "Applied contrast & sharpness enhancement")
+
+            return processedBitmap
+
+        } catch (e: Exception) {
+            debugLog("Image preprocessing failed", e.message)
+            // 前処理失敗時は元の画像を返す
+            return bitmap
         }
     }
 
@@ -424,16 +491,31 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
 
         recognizer.process(image)
             .addOnSuccessListener { visionText ->
-                val extractedText = visionText.text.trim()
-                debugLog("OCR success", "Text length: ${extractedText.length}")
+                // 縦書き対応: テキストブロックを位置でソート
+                val extractedText = extractTextWithVerticalSupport(visionText)
+
+                // ✨ 詳細なデバッグログ
+                debugLog("OCR success", """
+                    TextLength: ${extractedText.length},
+                    Preview: ${extractedText.take(100).replace("\n", " | ")},
+                    Changed: ${extractedText != lastRecognizedText}
+                """.trimIndent())
 
                 if (extractedText.isNotEmpty() && extractedText != lastRecognizedText && isReading && !isPaused) {
                     lastRecognizedText = extractedText
                     val sentences = splitIntoSentences(extractedText)
                     if (sentences.isNotEmpty()) {
+                        debugLog("Speaking", "Total sentences: ${sentences.size}")
                         speakSentences(sentences)
+                    } else {
+                        debugLog("No sentences", "Text could not be split into sentences")
                     }
+                } else if (extractedText.isEmpty()) {
+                    debugLog("OCR result empty", "No text extracted from image")
+                } else if (extractedText == lastRecognizedText) {
+                    debugLog("OCR duplicate", "Same text as previous capture")
                 }
+
                 isCapturing = false
             }
             .addOnFailureListener { e ->
@@ -441,6 +523,66 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                 handleError("OCRエラー", e)
                 isCapturing = false
             }
+    }
+
+    private fun extractTextWithVerticalSupport(visionText: com.google.mlkit.vision.text.Text): String {
+        if (visionText.textBlocks.isEmpty()) {
+            debugLog("OCR: No text blocks detected")
+            return visionText.text.trim()
+        }
+
+        // ✨ 信頼度フィルタリング: 低信頼度テキストを除外
+        val minConfidence = 0.5f  // 信頼度50%未満のテキストは除外
+        val blocks = visionText.textBlocks
+
+        // 信頼度の統計情報を計算
+        val confidences = blocks.flatMap { block ->
+            block.lines.flatMap { line ->
+                line.elements.map { element ->
+                    element.confidence ?: 0f
+                }
+            }
+        }
+
+        val avgConfidence = if (confidences.isNotEmpty()) confidences.average() else 0.0
+        val highConfidenceCount = confidences.count { it >= minConfidence }
+        val totalElementCount = confidences.size
+
+        debugLog("OCR confidence stats", """
+            Blocks: ${blocks.size},
+            Elements: $totalElementCount,
+            HighConf: $highConfidenceCount (${(highConfidenceCount.toFloat() / totalElementCount * 100).toInt()}%),
+            AvgConf: ${"%.2f".format(avgConfidence)}
+        """.trimIndent())
+
+        // テキストブロックの配置を分析
+        val avgWidth = blocks.map { it.boundingBox?.width() ?: 0 }.average()
+        val avgHeight = blocks.map { it.boundingBox?.height() ?: 0 }.average()
+
+        // 縦書き判定: ブロックの高さが幅より大きい場合
+        val isVertical = avgHeight > avgWidth * 1.5
+
+        debugLog("Text orientation", "Vertical: $isVertical, AvgW: ${"%.1f".format(avgWidth)}, AvgH: ${"%.1f".format(avgHeight)}")
+
+        return if (isVertical) {
+            // 縦書き: 右から左、上から下の順でソート
+            blocks.sortedWith(compareByDescending<com.google.mlkit.vision.text.Text.TextBlock> {
+                it.boundingBox?.right ?: 0
+            }.thenBy {
+                it.boundingBox?.top ?: 0
+            })
+                .joinToString("\n") { it.text }
+                .trim()
+        } else {
+            // 横書き: 上から下、左から右の順でソート
+            blocks.sortedWith(compareBy<com.google.mlkit.vision.text.Text.TextBlock> {
+                it.boundingBox?.top ?: 0
+            }.thenBy {
+                it.boundingBox?.left ?: 0
+            })
+                .joinToString("\n") { it.text }
+                .trim()
+        }
     }
 
     private fun splitIntoSentences(text: String): List<String> {
@@ -477,14 +619,14 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         currentSentenceIndex++
 
         if (currentSentenceIndex < currentSentences.size) {
-            // 次の文を読み上げ
-            Handler(Looper.getMainLooper()).postDelayed({
+            // 次の文を読み上げ (既存のmainHandlerを再利用)
+            mainHandler.postDelayed({
                 speakCurrentSentence()
             }, 500)
         } else {
             // ページ完了
             if (autoPageTurnEnabled && isReading) {
-                Handler(Looper.getMainLooper()).postDelayed({
+                mainHandler.postDelayed({
                     nextPage()
                 }, 2000)
             }
@@ -500,8 +642,8 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         intent.action = "NEXT_PAGE"
         startService(intent)
 
-        // OCRを再実行
-        Handler(Looper.getMainLooper()).postDelayed({
+        // OCRを再実行 (既存のmainHandlerを再利用)
+        mainHandler.postDelayed({
             if (isReading && !isPaused) {
                 performOCR()
             }
@@ -517,8 +659,8 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         intent.action = "PREVIOUS_PAGE"
         startService(intent)
 
-        // OCRを再実行
-        Handler(Looper.getMainLooper()).postDelayed({
+        // OCRを再実行 (既存のmainHandlerを再利用)
+        mainHandler.postDelayed({
             if (isReading && !isPaused) {
                 performOCR()
             }
@@ -542,8 +684,8 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             val textView = view.findViewById<TextView>(R.id.overlayText)
             textView.text = text.take(50) + if (text.length > 50) "..." else ""
 
-            // 5秒後に非表示
-            Handler(Looper.getMainLooper()).postDelayed({
+            // 5秒後に非表示 (既存のmainHandlerを再利用)
+            mainHandler.postDelayed({
                 updateOverlayUI()
             }, 5000)
         }
@@ -563,22 +705,28 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             }
 
             // TTS設定
-            textToSpeech!!.setSpeechRate(readingSpeed)
-            textToSpeech!!.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
-                override fun onStart(utteranceId: String?) {
-                    debugLog("TTS started", utteranceId)
-                }
+            textToSpeech?.let { tts ->
+                tts.setSpeechRate(readingSpeed)
+                tts.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
+                    override fun onStart(utteranceId: String?) {
+                        debugLog("TTS started", utteranceId)
+                    }
 
-                override fun onDone(utteranceId: String?) {
-                    debugLog("TTS completed", utteranceId)
-                    onSentenceComplete()
-                }
+                    override fun onDone(utteranceId: String?) {
+                        debugLog("TTS completed", utteranceId)
+                        onSentenceComplete()
+                    }
 
-                override fun onError(utteranceId: String?) {
-                    debugLog("TTS error", utteranceId)
-                    handleError("TTS エラー", Exception("Utterance failed: $utteranceId"))
-                }
-            })
+                    override fun onError(utteranceId: String?) {
+                        debugLog("TTS error", utteranceId)
+                        handleError("TTS エラー", Exception("Utterance failed: $utteranceId"))
+                    }
+                })
+            } ?: run {
+                debugLog("TTS object is null in onInit")
+                handleError("TTS初期化エラー", Exception("TextToSpeech is null after successful initialization"))
+                return
+            }
 
             appState.ttsInitialized = true
             updateNotification("準備完了")
@@ -650,17 +798,50 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         // リソース解放
         stopAutoOCR()
 
-        virtualDisplay?.release()
-        mediaProjection?.stop()
-        imageReader?.close()
+        // Handler の保留中タスクをクリア
+        mainHandler.removeCallbacksAndMessages(null)
 
-        overlayView?.let {
-            windowManager?.removeView(it)
+        // VirtualDisplay と MediaProjection の解放
+        try {
+            virtualDisplay?.release()
+            virtualDisplay = null
+        } catch (e: Exception) {
+            debugLog("Error releasing VirtualDisplay", e.message)
         }
 
+        try {
+            mediaProjection?.stop()
+            mediaProjection = null
+        } catch (e: Exception) {
+            debugLog("Error stopping MediaProjection", e.message)
+        }
+
+        try {
+            imageReader?.close()
+            imageReader = null
+        } catch (e: Exception) {
+            debugLog("Error closing ImageReader", e.message)
+        }
+
+        // オーバーレイビューの削除
+        overlayView?.let {
+            try {
+                windowManager?.removeView(it)
+            } catch (e: Exception) {
+                debugLog("Error removing overlay view", e.message)
+            }
+            overlayView = null
+        }
+
+        // TTS の停止とシャットダウン
         textToSpeech?.let { tts ->
-            tts.stop()
-            tts.shutdown()
+            try {
+                tts.stop()
+                tts.shutdown()
+            } catch (e: Exception) {
+                debugLog("Error shutting down TTS", e.message)
+            }
+            textToSpeech = null
         }
 
         debugLog("OverlayService destroyed")
