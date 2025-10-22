@@ -21,7 +21,7 @@ import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions
 import java.util.*
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
@@ -532,7 +532,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
 
     private fun processOCRImage(bitmap: Bitmap) {
         val image = InputImage.fromBitmap(bitmap, 0)
-        val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+        val recognizer = TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
 
         recognizer.process(image)
             .addOnSuccessListener { visionText ->
@@ -682,6 +682,9 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         debugLog("Next page")
         appState.currentPage++
 
+        // ページ変更時にlastRecognizedTextをリセット（新しいページの読み上げを開始させる）
+        lastRecognizedText = ""
+
         // AccessibilityServiceに自動ページめくりを要求
         val intent = Intent(this, AutoPageTurnService::class.java)
         intent.action = "NEXT_PAGE"
@@ -698,6 +701,9 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
     private fun previousPage() {
         debugLog("Previous page")
         appState.currentPage--
+
+        // ページ変更時にlastRecognizedTextをリセット（新しいページの読み上げを開始させる）
+        lastRecognizedText = ""
 
         // AccessibilityServiceに自動ページめくりを要求
         val intent = Intent(this, AutoPageTurnService::class.java)
