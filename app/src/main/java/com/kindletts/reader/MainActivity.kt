@@ -30,6 +30,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private var isPaused = false
     private var currentReadingSpeed = 1.0f
     private var autoPageTurnEnabled = true
+    private var pageDirection = "right_to_next" // "right_to_next" or "left_to_next"
 
     // MediaProjection 関連
     private var mediaProjectionManager: MediaProjectionManager? = null
@@ -118,6 +119,17 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             saveSettings()
             debugLog("Auto page turn: $autoPageTurnEnabled")
         }
+
+        // ページめくり方向設定
+        binding.pageDirectionGroup.setOnCheckedChangeListener { _, checkedId ->
+            pageDirection = when (checkedId) {
+                R.id.radioLeftToNext -> "left_to_next"
+                else -> "right_to_next"
+            }
+            saveSettings()
+            sendPageDirectionToService()
+            debugLog("Page direction changed", pageDirection)
+        }
     }
 
     private fun toggleReading() {
@@ -151,7 +163,17 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         intent.action = "START_READING"
         intent.putExtra("reading_speed", currentReadingSpeed)
         intent.putExtra("auto_page_turn", autoPageTurnEnabled)
+        intent.putExtra("page_direction", pageDirection)
         startService(intent)
+    }
+
+    private fun sendPageDirectionToService() {
+        if (OverlayService.isRunning) {
+            val intent = Intent(this, OverlayService::class.java)
+            intent.action = "SET_PAGE_DIRECTION"
+            intent.putExtra("page_direction", pageDirection)
+            startService(intent)
+        }
     }
 
     private fun stopReading() {
@@ -256,6 +278,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         intent.putExtra("screen_capture_data", data)
         intent.putExtra("reading_speed", currentReadingSpeed)
         intent.putExtra("auto_page_turn", autoPageTurnEnabled)
+        intent.putExtra("page_direction", pageDirection)
         startService(intent)
 
         // OverlayServiceが起動するまで少し待ってからUIを更新
@@ -346,19 +369,27 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private fun loadSettings() {
         currentReadingSpeed = sharedPreferences.getFloat("reading_speed", 1.0f)
         autoPageTurnEnabled = sharedPreferences.getBoolean("auto_page_turn", true)
+        pageDirection = sharedPreferences.getString("page_direction", "right_to_next") ?: "right_to_next"
 
         // UIに設定を反映
         val speedProgress = ((currentReadingSpeed / 0.25f) - 1).toInt().coerceIn(0, 8)
         binding.speedSeekBar.progress = speedProgress
         binding.autoPageTurnSwitch.isChecked = autoPageTurnEnabled
 
-        debugLog("Settings loaded - Speed: $currentReadingSpeed, AutoPageTurn: $autoPageTurnEnabled")
+        // ページめくり方向設定を反映
+        when (pageDirection) {
+            "left_to_next" -> binding.radioLeftToNext.isChecked = true
+            else -> binding.radioRightToNext.isChecked = true
+        }
+
+        debugLog("Settings loaded - Speed: $currentReadingSpeed, AutoPageTurn: $autoPageTurnEnabled, PageDirection: $pageDirection")
     }
 
     private fun saveSettings() {
         sharedPreferences.edit()
             .putFloat("reading_speed", currentReadingSpeed)
             .putBoolean("auto_page_turn", autoPageTurnEnabled)
+            .putString("page_direction", pageDirection)
             .apply()
 
         debugLog("Settings saved")
