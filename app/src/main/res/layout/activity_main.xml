@@ -146,7 +146,8 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:gravity="center_vertical">
+            android:gravity="center_vertical"
+            android:layout_marginBottom="16dp">
 
             <TextView
                 android:layout_width="0dp"
@@ -163,6 +164,38 @@
                 android:checked="true" />
 
         </LinearLayout>
+
+        <!-- ページめくり方向設定 -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="ページめくり方向"
+            android:textSize="16sp"
+            android:textColor="@color/black"
+            android:layout_marginBottom="8dp" />
+
+        <RadioGroup
+            android:id="@+id/pageDirectionGroup"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <RadioButton
+                android:id="@+id/radioRightToNext"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="右タップで次ページ（通常）"
+                android:textSize="14sp"
+                android:checked="true" />
+
+            <RadioButton
+                android:id="@+id/radioLeftToNext"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="左タップで次ページ（漫画モード）"
+                android:textSize="14sp" />
+
+        </RadioGroup>
 
     </LinearLayout>
 

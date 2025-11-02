@@ -56,6 +56,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
     private var isPaused = false
     private var readingSpeed = 1.0f
     private var autoPageTurnEnabled = true
+    private var pageDirection = "right_to_next" // "right_to_next" or "left_to_next"
 
     // OCR関連
     private var lastRecognizedText = ""
@@ -108,6 +109,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                 val data = intent.getParcelableExtra<Intent>("screen_capture_data")
                 readingSpeed = intent.getFloatExtra("reading_speed", 1.0f)
                 autoPageTurnEnabled = intent.getBooleanExtra("auto_page_turn", true)
+                pageDirection = intent.getStringExtra("page_direction") ?: "right_to_next"
 
                 if (data != null) {
                     startScreenCapture(data)
@@ -117,7 +119,12 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             "START_READING" -> {
                 readingSpeed = intent.getFloatExtra("reading_speed", 1.0f)
                 autoPageTurnEnabled = intent.getBooleanExtra("auto_page_turn", true)
+                pageDirection = intent.getStringExtra("page_direction") ?: "right_to_next"
                 startReading()
+            }
+            "SET_PAGE_DIRECTION" -> {
+                pageDirection = intent.getStringExtra("page_direction") ?: "right_to_next"
+                debugLog("Page direction changed", pageDirection)
             }
             "STOP_READING" -> stopReading()
             "PAUSE_READING" -> pauseReading()
@@ -480,54 +487,152 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
 
     /**
      * 画像前処理: OCR精度向上のための画像最適化
-     * - コントラスト強化
-     * - シャープネス向上
-     * - グレースケール変換（オプション）
+     * - 2倍拡大（ML Kitは高解像度で精度向上）
+     * - グレースケール変換
+     * - 適応的コントラスト強化
+     * - シャープネスフィルタ適用
      */
     private fun preprocessBitmapForOCR(bitmap: Bitmap): Bitmap {
         try {
             val width = bitmap.width
             val height = bitmap.height
 
-            // Step 1: 1.5倍拡大（ML Kitは高解像度でOCR精度向上）
-            val targetWidth = (width * 1.5).toInt()
-            val targetHeight = (height * 1.5).toInt()
+            // Step 1: 2倍拡大（ML Kitは高解像度でOCR精度向上）
+            val targetWidth = (width * 2.0).toInt()
+            val targetHeight = (height * 2.0).toInt()
             val scaledBitmap = Bitmap.createScaledBitmap(bitmap, targetWidth, targetHeight, true)
 
-            // Step 2: グレースケール + コントラスト強化
-            val processedBitmap = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(processedBitmap)
+            // Step 2: グレースケール変換
+            val grayscaleBitmap = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(grayscaleBitmap)
             val paint = Paint()
 
-            // グレースケール変換
             val grayscaleMatrix = ColorMatrix()
             grayscaleMatrix.setSaturation(0f)
-
-            // コントラストを強化（テキストを明確に）
-            val contrastMatrix = ColorMatrix(floatArrayOf(
-                2.5f, 0f, 0f, 0f, -180f,  // 高コントラスト
-                0f, 2.5f, 0f, 0f, -180f,
-                0f, 0f, 2.5f, 0f, -180f,
-                0f, 0f, 0f, 1f, 0f
-            ))
-
-            grayscaleMatrix.postConcat(contrastMatrix)
             paint.colorFilter = ColorMatrixColorFilter(grayscaleMatrix)
             canvas.drawBitmap(scaledBitmap, 0f, 0f, paint)
 
-            debugLog("Image preprocessing", "Scaled: ${targetWidth}x${targetHeight}, Grayscale + High contrast applied")
+            // Step 3: シャープネスフィルタ適用（エッジ強調）
+            val sharpenedBitmap = applySharpenFilter(grayscaleBitmap)
+
+            // Step 4: 適応的コントラスト強化
+            val finalBitmap = applyAdaptiveContrast(sharpenedBitmap)
+
+            debugLog("Image preprocessing", "2x scale, grayscale, sharpen, adaptive contrast applied")
 
             // メモリ解放
             if (scaledBitmap != bitmap) {
                 scaledBitmap.recycle()
             }
+            grayscaleBitmap.recycle()
+            sharpenedBitmap.recycle()
 
-            return processedBitmap
+            return finalBitmap
 
         } catch (e: Exception) {
             debugLog("Image preprocessing failed", e.message)
             return bitmap
         }
+    }
+
+    /**
+     * シャープネスフィルタ適用: エッジを強調してテキストを明確に
+     */
+    private fun applySharpenFilter(bitmap: Bitmap): Bitmap {
+        val width = bitmap.width
+        val height = bitmap.height
+        val result = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+
+        // シャープネスカーネル
+        val kernel = floatArrayOf(
+            0f, -1f, 0f,
+            -1f, 5f, -1f,
+            0f, -1f, 0f
+        )
+
+        for (y in 1 until height - 1) {
+            for (x in 1 until width - 1) {
+                var r = 0f
+                var g = 0f
+                var b = 0f
+
+                for (ky in -1..1) {
+                    for (kx in -1..1) {
+                        val pixel = bitmap.getPixel(x + kx, y + ky)
+                        val kernelValue = kernel[(ky + 1) * 3 + (kx + 1)]
+                        r += Color.red(pixel) * kernelValue
+                        g += Color.green(pixel) * kernelValue
+                        b += Color.blue(pixel) * kernelValue
+                    }
+                }
+
+                val newR = r.toInt().coerceIn(0, 255)
+                val newG = g.toInt().coerceIn(0, 255)
+                val newB = b.toInt().coerceIn(0, 255)
+                result.setPixel(x, y, Color.rgb(newR, newG, newB))
+            }
+        }
+
+        return result
+    }
+
+    /**
+     * 適応的コントラスト強化: テキストと背景の差を最大化
+     */
+    private fun applyAdaptiveContrast(bitmap: Bitmap): Bitmap {
+        val width = bitmap.width
+        val height = bitmap.height
+        val result = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(result)
+        val paint = Paint()
+
+        // 輝度ヒストグラムを計算
+        val histogram = IntArray(256)
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                val pixel = bitmap.getPixel(x, y)
+                val brightness = (Color.red(pixel) * 0.299 + Color.green(pixel) * 0.587 + Color.blue(pixel) * 0.114).toInt()
+                histogram[brightness]++
+            }
+        }
+
+        // ヒストグラムから最適なコントラストパラメータを計算
+        val totalPixels = width * height
+        var darkPixels = 0
+        var darkThreshold = 0
+        for (i in 0..127) {
+            darkPixels += histogram[i]
+            if (darkPixels > totalPixels * 0.1) {
+                darkThreshold = i
+                break
+            }
+        }
+
+        var brightPixels = 0
+        var brightThreshold = 255
+        for (i in 255 downTo 128) {
+            brightPixels += histogram[i]
+            if (brightPixels > totalPixels * 0.1) {
+                brightThreshold = i
+                break
+            }
+        }
+
+        // 適応的コントラスト調整
+        val contrastFactor = 255.0f / (brightThreshold - darkThreshold).coerceAtLeast(1)
+        val offset = -darkThreshold * contrastFactor
+
+        val contrastMatrix = ColorMatrix(floatArrayOf(
+            contrastFactor, 0f, 0f, 0f, offset,
+            0f, contrastFactor, 0f, 0f, offset,
+            0f, 0f, contrastFactor, 0f, offset,
+            0f, 0f, 0f, 1f, 0f
+        ))
+
+        paint.colorFilter = ColorMatrixColorFilter(contrastMatrix)
+        canvas.drawBitmap(bitmap, 0f, 0f, paint)
+
+        return result
     }
 
     private fun processOCRImage(bitmap: Bitmap) {
@@ -679,43 +784,73 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun nextPage() {
-        debugLog("Next page")
+        debugLog("Next page", "direction: $pageDirection")
         appState.currentPage++
 
         // ページ変更時にlastRecognizedTextをリセット（新しいページの読み上げを開始させる）
         lastRecognizedText = ""
 
-        // AccessibilityServiceに自動ページめくりを要求
+        // ページめくり方向に応じてジェスチャーを選択
         val intent = Intent(this, AutoPageTurnService::class.java)
-        intent.action = "NEXT_PAGE"
+        intent.action = if (pageDirection == "right_to_next") "NEXT_PAGE" else "PREVIOUS_PAGE"
+        intent.putExtra("page_direction", pageDirection)
         startService(intent)
 
-        // OCRを再実行 (既存のmainHandlerを再利用)
-        mainHandler.postDelayed({
-            if (isReading && !isPaused) {
-                performOCR()
-            }
-        }, 1000)
+        // OCRを再実行（リトライ付き）
+        performOCRWithRetry(maxRetries = 3, initialDelay = 1500)
     }
 
     private fun previousPage() {
-        debugLog("Previous page")
+        debugLog("Previous page", "direction: $pageDirection")
         appState.currentPage--
 
         // ページ変更時にlastRecognizedTextをリセット（新しいページの読み上げを開始させる）
         lastRecognizedText = ""
 
-        // AccessibilityServiceに自動ページめくりを要求
+        // ページめくり方向に応じてジェスチャーを選択
         val intent = Intent(this, AutoPageTurnService::class.java)
-        intent.action = "PREVIOUS_PAGE"
+        intent.action = if (pageDirection == "right_to_next") "PREVIOUS_PAGE" else "NEXT_PAGE"
+        intent.putExtra("page_direction", pageDirection)
         startService(intent)
 
-        // OCRを再実行 (既存のmainHandlerを再利用)
-        mainHandler.postDelayed({
-            if (isReading && !isPaused) {
-                performOCR()
+        // OCRを再実行（リトライ付き）
+        performOCRWithRetry(maxRetries = 3, initialDelay = 1500)
+    }
+
+    /**
+     * リトライ付きOCR実行
+     * ページめくり後、画面が安定するまで待ってからOCRを実行
+     */
+    private fun performOCRWithRetry(maxRetries: Int, initialDelay: Long) {
+        var retryCount = 0
+
+        fun attemptOCR() {
+            if (!isReading || isPaused) {
+                debugLog("OCR retry cancelled", "isReading: $isReading, isPaused: $isPaused")
+                return
             }
-        }, 1000)
+
+            mainHandler.postDelayed({
+                if (!isReading || isPaused) return@postDelayed
+
+                performOCR()
+
+                // lastRecognizedTextが更新されたかチェック
+                mainHandler.postDelayed({
+                    if (lastRecognizedText.isEmpty() && retryCount < maxRetries) {
+                        retryCount++
+                        debugLog("OCR retry", "Attempt $retryCount of $maxRetries")
+                        attemptOCR()
+                    } else if (lastRecognizedText.isEmpty()) {
+                        debugLog("OCR retry exhausted", "No text found after $maxRetries attempts")
+                    } else {
+                        debugLog("OCR retry success", "Text found on attempt $retryCount")
+                    }
+                }, 500)
+            }, if (retryCount == 0) initialDelay else 1000)
+        }
+
+        attemptOCR()
     }
 
     private fun updateOverlayUI() {
