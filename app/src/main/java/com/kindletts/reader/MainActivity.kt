@@ -40,7 +40,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == Activity.RESULT_OK) {
                 result.data?.let { data ->
-                    startOverlayService(data)
+                    startOverlayServiceAndReading(data)
                 }
             } else {
                 showToast("画面キャプチャ権限が必要です")
@@ -96,8 +96,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         binding.btnPrevPage.setOnClickListener { previousPage() }
         binding.btnNextPage.setOnClickListener { nextPage() }
 
-        // 権限ボタン
-        binding.btnScreenCapture.setOnClickListener { requestScreenCapturePermission() }
+        // 権限ボタン（アクセシビリティのみ表示）
         binding.btnAccessibility.setOnClickListener { openAccessibilitySettings() }
 
         // 設定コントロール
@@ -133,7 +132,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun toggleReading() {
-        if (!checkAllPermissions()) {
+        // アクセシビリティ権限のみチェック（画面キャプチャは自動で要求）
+        if (!isAccessibilityServiceEnabled()) {
             showPermissionDialog()
             return
         }
@@ -148,7 +148,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private fun startReading() {
         debugLog("Starting reading mode")
 
+        // 画面キャプチャが開始されていない場合は自動的に要求
         if (!OverlayService.isRunning) {
+            debugLog("OverlayService not running, requesting screen capture")
             requestScreenCapturePermission()
             return
         }
@@ -270,8 +272,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         accessibilitySettingsLauncher.launch(intent)
     }
 
-    private fun startOverlayService(data: Intent) {
-        debugLog("Starting overlay service with screen capture data")
+    private fun startOverlayServiceAndReading(data: Intent) {
+        debugLog("Starting overlay service with screen capture data and auto-start reading")
 
         val intent = Intent(this, OverlayService::class.java)
         intent.action = "START_SERVICE"
@@ -281,11 +283,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         intent.putExtra("page_direction", pageDirection)
         startService(intent)
 
-        // OverlayServiceが起動するまで少し待ってからUIを更新
+        // OverlayServiceが起動するまで少し待ってから読み上げを開始
         binding.root.postDelayed({
             updatePermissionButtonStates()
             updateUIState()
-        }, 500)
+
+            // 自動的に読み上げを開始
+            startReading()
+        }, 800)
     }
 
     private fun checkAllPermissions(): Boolean {
@@ -314,24 +319,12 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun updatePermissionButtonStates() {
-        // オーバーレイ権限状態
-        val overlayGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this)
-
-        // 画面キャプチャ権限ボタン: OverlayServiceが動いているかどうかで判定
-        val screenCaptureGranted = OverlayService.isRunning
-        binding.btnScreenCapture.text = if (overlayGranted) {
-            if (screenCaptureGranted) "画面キャプチャ準備完了 ✓" else "画面キャプチャを開始"
-        } else {
-            "オーバーレイ権限が必要"
-        }
-        binding.btnScreenCapture.isEnabled = overlayGranted && !screenCaptureGranted
-
-        // アクセシビリティ権限状態
+        // アクセシビリティ権限状態のみ表示（画面キャプチャは自動）
         val accessibilityEnabled = isAccessibilityServiceEnabled()
-        binding.btnAccessibility.text = if (accessibilityEnabled) "アクセシビリティ権限 ✓" else "アクセシビリティ権限"
+        binding.btnAccessibility.text = if (accessibilityEnabled) "アクセシビリティ権限 ✓" else "アクセシビリティ権限を許可"
         binding.btnAccessibility.isEnabled = !accessibilityEnabled
 
-        debugLog("Permission states - Overlay: $overlayGranted, ScreenCapture: $screenCaptureGranted, Accessibility: $accessibilityEnabled")
+        debugLog("Permission states - Accessibility: $accessibilityEnabled")
     }
 
     private fun updateUIState() {
@@ -342,8 +335,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         binding.btnPrevPage.isEnabled = isReading
         binding.btnNextPage.isEnabled = isReading
 
-        val allPermissionsGranted = checkAllPermissions()
-        binding.btnStartReading.isEnabled = allPermissionsGranted || isReading
+        // アクセシビリティ権限があれば読み上げ開始可能（画面キャプチャは自動）
+        val accessibilityEnabled = isAccessibilityServiceEnabled()
+        binding.btnStartReading.isEnabled = accessibilityEnabled || isReading
     }
 
     private fun updateStatusText(status: String) {

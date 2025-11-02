@@ -486,20 +486,21 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
     }
 
     /**
-     * 画像前処理: OCR精度向上のための画像最適化
-     * - 2倍拡大（ML Kitは高解像度で精度向上）
+     * 画像前処理: OCR精度向上のための画像最適化（v1.0.6 強化版）
+     * - 3倍拡大（ML Kitは高解像度で精度が大幅向上）
      * - グレースケール変換
-     * - 適応的コントラスト強化
-     * - シャープネスフィルタ適用
+     * - ノイズ除去（メディアンフィルタ）
+     * - シャープネスフィルタ適用（強力）
+     * - 適応的二値化（大津の方法）
      */
     private fun preprocessBitmapForOCR(bitmap: Bitmap): Bitmap {
         try {
             val width = bitmap.width
             val height = bitmap.height
 
-            // Step 1: 2倍拡大（ML Kitは高解像度でOCR精度向上）
-            val targetWidth = (width * 2.0).toInt()
-            val targetHeight = (height * 2.0).toInt()
+            // Step 1: 3倍拡大（2倍→3倍で小さな文字の認識精度向上）
+            val targetWidth = (width * 3.0).toInt()
+            val targetHeight = (height * 3.0).toInt()
             val scaledBitmap = Bitmap.createScaledBitmap(bitmap, targetWidth, targetHeight, true)
 
             // Step 2: グレースケール変換
@@ -512,22 +513,26 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             paint.colorFilter = ColorMatrixColorFilter(grayscaleMatrix)
             canvas.drawBitmap(scaledBitmap, 0f, 0f, paint)
 
-            // Step 3: シャープネスフィルタ適用（エッジ強調）
-            val sharpenedBitmap = applySharpenFilter(grayscaleBitmap)
+            // Step 3: ノイズ除去（メディアンフィルタ）
+            val denoisedBitmap = applyMedianFilter(grayscaleBitmap)
 
-            // Step 4: 適応的コントラスト強化
-            val finalBitmap = applyAdaptiveContrast(sharpenedBitmap)
+            // Step 4: 強力なシャープネスフィルタ適用
+            val sharpenedBitmap = applyStrongSharpenFilter(denoisedBitmap)
 
-            debugLog("Image preprocessing", "2x scale, grayscale, sharpen, adaptive contrast applied")
+            // Step 5: 適応的二値化（大津の方法）
+            val binarizedBitmap = applyOtsuBinarization(sharpenedBitmap)
+
+            debugLog("Image preprocessing", "3x scale, grayscale, denoise, sharpen, binarization applied")
 
             // メモリ解放
             if (scaledBitmap != bitmap) {
                 scaledBitmap.recycle()
             }
             grayscaleBitmap.recycle()
+            denoisedBitmap.recycle()
             sharpenedBitmap.recycle()
 
-            return finalBitmap
+            return binarizedBitmap
 
         } catch (e: Exception) {
             debugLog("Image preprocessing failed", e.message)
@@ -536,40 +541,28 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
     }
 
     /**
-     * シャープネスフィルタ適用: エッジを強調してテキストを明確に
+     * メディアンフィルタ: ノイズ除去（3x3ウィンドウ）
      */
-    private fun applySharpenFilter(bitmap: Bitmap): Bitmap {
+    private fun applyMedianFilter(bitmap: Bitmap): Bitmap {
         val width = bitmap.width
         val height = bitmap.height
         val result = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
 
-        // シャープネスカーネル
-        val kernel = floatArrayOf(
-            0f, -1f, 0f,
-            -1f, 5f, -1f,
-            0f, -1f, 0f
-        )
-
         for (y in 1 until height - 1) {
             for (x in 1 until width - 1) {
-                var r = 0f
-                var g = 0f
-                var b = 0f
+                val values = mutableListOf<Int>()
 
                 for (ky in -1..1) {
                     for (kx in -1..1) {
                         val pixel = bitmap.getPixel(x + kx, y + ky)
-                        val kernelValue = kernel[(ky + 1) * 3 + (kx + 1)]
-                        r += Color.red(pixel) * kernelValue
-                        g += Color.green(pixel) * kernelValue
-                        b += Color.blue(pixel) * kernelValue
+                        val gray = Color.red(pixel) // Already grayscale
+                        values.add(gray)
                     }
                 }
 
-                val newR = r.toInt().coerceIn(0, 255)
-                val newG = g.toInt().coerceIn(0, 255)
-                val newB = b.toInt().coerceIn(0, 255)
-                result.setPixel(x, y, Color.rgb(newR, newG, newB))
+                values.sort()
+                val median = values[4] // 中央値（9個の中央）
+                result.setPixel(x, y, Color.rgb(median, median, median))
             }
         }
 
@@ -577,7 +570,108 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
     }
 
     /**
-     * 適応的コントラスト強化: テキストと背景の差を最大化
+     * 強力なシャープネスフィルタ適用: エッジを強調してテキストを明確に
+     */
+    private fun applyStrongSharpenFilter(bitmap: Bitmap): Bitmap {
+        val width = bitmap.width
+        val height = bitmap.height
+        val result = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+
+        // 強力なシャープネスカーネル
+        val kernel = floatArrayOf(
+            -1f, -1f, -1f,
+            -1f, 9f, -1f,
+            -1f, -1f, -1f
+        )
+
+        for (y in 1 until height - 1) {
+            for (x in 1 until width - 1) {
+                var sum = 0f
+
+                for (ky in -1..1) {
+                    for (kx in -1..1) {
+                        val pixel = bitmap.getPixel(x + kx, y + ky)
+                        val gray = Color.red(pixel)
+                        val kernelValue = kernel[(ky + 1) * 3 + (kx + 1)]
+                        sum += gray * kernelValue
+                    }
+                }
+
+                val newValue = sum.toInt().coerceIn(0, 255)
+                result.setPixel(x, y, Color.rgb(newValue, newValue, newValue))
+            }
+        }
+
+        return result
+    }
+
+    /**
+     * 大津の方法による適応的二値化: テキストと背景を明確に分離
+     */
+    private fun applyOtsuBinarization(bitmap: Bitmap): Bitmap {
+        val width = bitmap.width
+        val height = bitmap.height
+        val result = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+
+        // ヒストグラム計算
+        val histogram = IntArray(256)
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                val pixel = bitmap.getPixel(x, y)
+                val gray = Color.red(pixel)
+                histogram[gray]++
+            }
+        }
+
+        // 大津の方法で最適な閾値を計算
+        val totalPixels = width * height
+        var sum = 0.0
+        for (i in 0..255) {
+            sum += i * histogram[i]
+        }
+
+        var sumB = 0.0
+        var wB = 0
+        var wF = 0
+        var varMax = 0.0
+        var threshold = 0
+
+        for (t in 0..255) {
+            wB += histogram[t]
+            if (wB == 0) continue
+
+            wF = totalPixels - wB
+            if (wF == 0) break
+
+            sumB += t * histogram[t]
+            val mB = sumB / wB
+            val mF = (sum - sumB) / wF
+
+            val varBetween = wB.toDouble() * wF.toDouble() * (mB - mF) * (mB - mF)
+
+            if (varBetween > varMax) {
+                varMax = varBetween
+                threshold = t
+            }
+        }
+
+        debugLog("Otsu threshold", threshold)
+
+        // 二値化適用
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                val pixel = bitmap.getPixel(x, y)
+                val gray = Color.red(pixel)
+                val binaryValue = if (gray > threshold) 255 else 0
+                result.setPixel(x, y, Color.rgb(binaryValue, binaryValue, binaryValue))
+            }
+        }
+
+        return result
+    }
+
+    /**
+     * 適応的コントラスト強化: テキストと背景の差を最大化（削除予定）
      */
     private fun applyAdaptiveContrast(bitmap: Bitmap): Bitmap {
         val width = bitmap.width
