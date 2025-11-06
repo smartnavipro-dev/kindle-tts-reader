@@ -276,21 +276,23 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         debugLog("Starting overlay service with screen capture data and auto-start reading")
 
         val intent = Intent(this, OverlayService::class.java)
-        intent.action = "START_SERVICE"
+        intent.action = "START_SERVICE_AND_READING"  // 新しいアクション
         intent.putExtra("screen_capture_data", data)
         intent.putExtra("reading_speed", currentReadingSpeed)
         intent.putExtra("auto_page_turn", autoPageTurnEnabled)
         intent.putExtra("page_direction", pageDirection)
         startService(intent)
 
-        // OverlayServiceが起動するまで少し待ってから読み上げを開始
+        // UI状態を更新
+        isReading = true
+        isPaused = false
+
+        // OverlayServiceが起動するまで少し待ってからUIを更新
         binding.root.postDelayed({
             updatePermissionButtonStates()
             updateUIState()
-
-            // 自動的に読み上げを開始
-            startReading()
-        }, 800)
+            updateStatusText("読み上げ中...")
+        }, 500)
     }
 
     private fun checkAllPermissions(): Boolean {

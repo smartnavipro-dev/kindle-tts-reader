@@ -116,6 +116,27 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                     createOverlay()
                 }
             }
+            "START_SERVICE_AND_READING" -> {
+                // 画面キャプチャとオーバーレイを開始し、その後自動的に読み上げを開始
+                val data = intent.getParcelableExtra<Intent>("screen_capture_data")
+                readingSpeed = intent.getFloatExtra("reading_speed", 1.0f)
+                autoPageTurnEnabled = intent.getBooleanExtra("auto_page_turn", true)
+                pageDirection = intent.getStringExtra("page_direction") ?: "right_to_next"
+
+                if (data != null) {
+                    startScreenCapture(data)
+                    createOverlay()
+
+                    // 画面キャプチャとTTSの初期化を待ってから読み上げ開始
+                    mainHandler.postDelayed({
+                        if (appState.screenCaptureActive && appState.ttsInitialized) {
+                            startReading()
+                        } else {
+                            debugLog("Auto-start reading failed", "ScreenCapture: ${appState.screenCaptureActive}, TTS: ${appState.ttsInitialized}")
+                        }
+                    }, 1000)
+                }
+            }
             "START_READING" -> {
                 readingSpeed = intent.getFloatExtra("reading_speed", 1.0f)
                 autoPageTurnEnabled = intent.getBooleanExtra("auto_page_turn", true)
