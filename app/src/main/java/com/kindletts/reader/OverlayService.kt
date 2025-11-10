@@ -543,59 +543,261 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
+    // v1.0.15: 画像回転フラグを保持（縦書き判定後に使用）
+    private var wasImageRotated = false
+
     /**
-     * 画像前処理: OCR精度向上のための画像最適化（v1.0.12 超高速精度改善版）
-     * - 3.0倍拡大（OCR精度優先）
-     * - グレースケール変換
-     * - 強化されたコントラスト（2.0倍 + 明るさ調整）
-     * ※ColorMatrixのみ使用で超高速（getPixel/setPixelは一切使用しない）
+     * v1.0.16: 画像回転方式改善 - 縦書きテキストを横書きに変換してOCR精度を根本的に改善
+     *
+     * ML Kit Japanese OCRは横書きテキストに最適化されているため、
+     * 縦書きテキスト（Kindle日本語書籍）を90度回転させて横書き化することで、
+     * 認識精度を大幅に向上させる。
+     *
+     * 処理フロー:
+     * 1. 日本語書籍は常に縦書きと仮定して画像を90度回転
+     * 2. 適度な前処理（4倍スケール + 中程度のコントラスト）でOCR実行
+     * 3. テキスト順序を縦書き読み順（右→左、上→下）に復元
      */
     private fun preprocessBitmapForOCR(bitmap: Bitmap): Bitmap {
         try {
             val startTime = System.currentTimeMillis()
-            val width = bitmap.width
-            val height = bitmap.height
+            debugLog("v1.0.16 Image Rotation OCR", "Starting")
 
-            debugLog("preprocessBitmapForOCR", "Starting preprocessing, size: ${width}x${height}")
+            // ステップ1: 日本語Kindleは常に縦書きと仮定して回転
+            // （エッジ検出は不正確なため削除）
+            wasImageRotated = true
+            val rotatedBitmap = rotateBitmap90Clockwise(bitmap)
+            debugLog("Image rotated", "90 degrees clockwise for vertical text")
 
-            // Step 1: 3.0倍拡大（OCR精度優先）
-            val targetWidth = (width * 3.0).toInt()
-            val targetHeight = (height * 3.0).toInt()
-            debugLog("Step 1: Scaling", "Target: ${targetWidth}x${targetHeight}")
+            // ステップ2: 適度な前処理（回転により精度が上がるため、過度な処理は不要）
+            val processedBitmap = applyBalancedPreprocessing(rotatedBitmap)
 
-            val scaledBitmap = Bitmap.createScaledBitmap(bitmap, targetWidth, targetHeight, true)
-            debugLog("Step 1 completed", "Time: ${System.currentTimeMillis() - startTime}ms")
+            debugLog("v1.0.16 completed", "Rotated: true, Time: ${System.currentTimeMillis() - startTime}ms")
 
-            // Step 2: グレースケール + 強化されたコントラスト（2.0倍）+ 明るさ調整
-            debugLog("Step 2: Grayscale + Enhanced Contrast", "Starting")
-            val enhancedBitmap = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(enhancedBitmap)
-            val paint = Paint()
-
-            // グレースケール + 強めのコントラスト（2.0倍）+ 明るさ調整（-128で暗部を黒く）
-            val colorMatrix = ColorMatrix(floatArrayOf(
-                2.0f, 2.0f, 2.0f, 0f, -128f,  // R: グレースケール + 強コントラスト + 明るさ調整
-                2.0f, 2.0f, 2.0f, 0f, -128f,  // G
-                2.0f, 2.0f, 2.0f, 0f, -128f,  // B
-                0f, 0f, 0f, 1f, 0f              // A
-            ))
-            paint.colorFilter = ColorMatrixColorFilter(colorMatrix)
-            canvas.drawBitmap(scaledBitmap, 0f, 0f, paint)
-            debugLog("Step 2 completed", "Time: ${System.currentTimeMillis() - startTime}ms")
-
-            debugLog("Image preprocessing completed", "Total time: ${System.currentTimeMillis() - startTime}ms")
-
-            // メモリ解放
-            if (scaledBitmap != bitmap) {
-                scaledBitmap.recycle()
-            }
-
-            return enhancedBitmap
+            return processedBitmap
 
         } catch (e: Exception) {
-            debugLog("Image preprocessing failed", e.message)
+            debugLog("v1.0.16 preprocessing failed", e.message)
+            wasImageRotated = false
             return bitmap
         }
+    }
+
+    /**
+     * クイックサンプリングによる縦書き判定（高速版）
+     *
+     * 全画像ではなく、中央領域の一部をサンプリングしてテキストの方向性を判定。
+     * これにより処理時間を大幅に短縮。
+     */
+    private fun detectVerticalTextFast(bitmap: Bitmap): Boolean {
+        val width = bitmap.width
+        val height = bitmap.height
+
+        // 中央領域の20%をサンプリング（Kindle本文領域）
+        val sampleLeft = (width * 0.1).toInt()
+        val sampleTop = (height * 0.2).toInt()
+        val sampleWidth = (width * 0.8).toInt()
+        val sampleHeight = (height * 0.6).toInt()
+
+        // エッジ検出による方向性判定
+        var verticalEdges = 0
+        var horizontalEdges = 0
+
+        val sampleStep = 20  // 20ピクセルごとにサンプリング（高速化）
+
+        for (y in sampleTop until (sampleTop + sampleHeight) step sampleStep) {
+            for (x in sampleLeft until (sampleLeft + sampleWidth) step sampleStep) {
+                if (x + 1 >= width || y + 1 >= height) continue
+
+                val pixel = bitmap.getPixel(x, y)
+                val pixelRight = bitmap.getPixel(x + 1, y)
+                val pixelDown = bitmap.getPixel(x, y + 1)
+
+                val gray = Color.red(pixel)
+                val grayRight = Color.red(pixelRight)
+                val grayDown = Color.red(pixelDown)
+
+                val horizontalDiff = Math.abs(gray - grayRight)
+                val verticalDiff = Math.abs(gray - grayDown)
+
+                if (horizontalDiff > 30) horizontalEdges++
+                if (verticalDiff > 30) verticalEdges++
+            }
+        }
+
+        // v1.0.15 改善版: より柔軟な縦書き判定
+        // 縦方向のエッジが多い = 文字の上下境界が多い = 横書きの可能性
+        // 横方向のエッジが多い = 文字の左右境界が多い = 縦書きの可能性
+        // しかし実測では差が小さいため、閾値を大幅に下げる
+
+        val vToHRatio = if (horizontalEdges > 0) verticalEdges.toDouble() / horizontalEdges else 1.0
+        val hToVRatio = if (verticalEdges > 0) horizontalEdges.toDouble() / verticalEdges else 1.0
+
+        // 縦書き判定: 縦エッジがやや多い、または拮抗している場合は縦書きと判定
+        // 日本語Kindleは縦書きが多いため、判定を緩くする
+        val isVertical = vToHRatio >= 1.02  // 2%以上の差があれば縦書き
+
+        debugLog("Edge detection", "V:$verticalEdges, H:$horizontalEdges, V/H:${"%.2f".format(vToHRatio)}, IsVertical:$isVertical")
+
+        return isVertical
+    }
+
+    /**
+     * 画像を90度時計回りに回転（縦書き→横書き変換）
+     */
+    private fun rotateBitmap90Clockwise(bitmap: Bitmap): Bitmap {
+        val matrix = Matrix()
+        matrix.postRotate(90f)
+
+        val rotated = Bitmap.createBitmap(
+            bitmap,
+            0,
+            0,
+            bitmap.width,
+            bitmap.height,
+            matrix,
+            true
+        )
+
+        debugLog("Bitmap rotated", "Original: ${bitmap.width}x${bitmap.height}, Rotated: ${rotated.width}x${rotated.height}")
+
+        return rotated
+    }
+
+    /**
+     * バランス型前処理: 4倍スケール + 中程度のコントラスト
+     *
+     * 画像回転により精度が大幅に向上するため、過度な前処理（5倍・6倍スケール）は不要。
+     * 処理速度とのバランスを取った適度な前処理を適用。
+     */
+    private fun applyBalancedPreprocessing(bitmap: Bitmap): Bitmap {
+        val width = bitmap.width
+        val height = bitmap.height
+
+        // 4倍拡大（バランス重視）
+        val targetWidth = (width * 4.0).toInt()
+        val targetHeight = (height * 4.0).toInt()
+        val scaledBitmap = Bitmap.createScaledBitmap(bitmap, targetWidth, targetHeight, true)
+
+        // 中程度のコントラスト強化
+        val result = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(result)
+        val paint = Paint()
+
+        val colorMatrix = ColorMatrix(floatArrayOf(
+            3.0f, 3.0f, 3.0f, 0f, -160f,  // 適度なコントラスト
+            3.0f, 3.0f, 3.0f, 0f, -160f,
+            3.0f, 3.0f, 3.0f, 0f, -160f,
+            0f, 0f, 0f, 1f, 0f
+        ))
+        paint.colorFilter = ColorMatrixColorFilter(colorMatrix)
+        canvas.drawBitmap(scaledBitmap, 0f, 0f, paint)
+
+        if (scaledBitmap != bitmap) scaledBitmap.recycle()
+        return result
+    }
+
+    /**
+     * 戦略1: 5倍拡大 + 超強力コントラスト (認識量重視)
+     */
+    private fun applyStrategy1(bitmap: Bitmap): Bitmap {
+        val width = bitmap.width
+        val height = bitmap.height
+
+        // 5倍拡大
+        val targetWidth = (width * 5.0).toInt()
+        val targetHeight = (height * 5.0).toInt()
+        val scaledBitmap = Bitmap.createScaledBitmap(bitmap, targetWidth, targetHeight, true)
+
+        // 超強力コントラスト + 明るさ調整
+        val result = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(result)
+        val paint = Paint()
+
+        val colorMatrix = ColorMatrix(floatArrayOf(
+            4.0f, 4.0f, 4.0f, 0f, -200f,  // より強力なコントラスト
+            4.0f, 4.0f, 4.0f, 0f, -200f,
+            4.0f, 4.0f, 4.0f, 0f, -200f,
+            0f, 0f, 0f, 1f, 0f
+        ))
+        paint.colorFilter = ColorMatrixColorFilter(colorMatrix)
+        canvas.drawBitmap(scaledBitmap, 0f, 0f, paint)
+
+        if (scaledBitmap != bitmap) scaledBitmap.recycle()
+        return result
+    }
+
+    /**
+     * 戦略2: 4倍拡大 + 完全二値化 (精度重視)
+     */
+    private fun applyStrategy2(bitmap: Bitmap): Bitmap {
+        val width = bitmap.width
+        val height = bitmap.height
+
+        // 4倍拡大
+        val targetWidth = (width * 4.0).toInt()
+        val targetHeight = (height * 4.0).toInt()
+        val scaledBitmap = Bitmap.createScaledBitmap(bitmap, targetWidth, targetHeight, true)
+
+        // グレースケール化
+        val grayBitmap = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(grayBitmap)
+        val paint = Paint()
+        val grayMatrix = ColorMatrix(floatArrayOf(
+            0.33f, 0.33f, 0.33f, 0f, 0f,
+            0.33f, 0.33f, 0.33f, 0f, 0f,
+            0.33f, 0.33f, 0.33f, 0f, 0f,
+            0f, 0f, 0f, 1f, 0f
+        ))
+        paint.colorFilter = ColorMatrixColorFilter(grayMatrix)
+        canvas.drawBitmap(scaledBitmap, 0f, 0f, paint)
+
+        // 完全二値化 (閾値128で白黒化)
+        val result = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
+        val canvas2 = Canvas(result)
+        val paint2 = Paint()
+        val binaryMatrix = ColorMatrix(floatArrayOf(
+            255f, 255f, 255f, 0f, -128*255f,
+            255f, 255f, 255f, 0f, -128*255f,
+            255f, 255f, 255f, 0f, -128*255f,
+            0f, 0f, 0f, 1f, 0f
+        ))
+        paint2.colorFilter = ColorMatrixColorFilter(binaryMatrix)
+        canvas2.drawBitmap(grayBitmap, 0f, 0f, paint2)
+
+        if (scaledBitmap != bitmap) scaledBitmap.recycle()
+        grayBitmap.recycle()
+        return result
+    }
+
+    /**
+     * 戦略3: 6倍拡大 + バランス型 (超高解像度)
+     */
+    private fun applyStrategy3(bitmap: Bitmap): Bitmap {
+        val width = bitmap.width
+        val height = bitmap.height
+
+        // 6倍拡大 (最高解像度)
+        val targetWidth = (width * 6.0).toInt()
+        val targetHeight = (height * 6.0).toInt()
+        val scaledBitmap = Bitmap.createScaledBitmap(bitmap, targetWidth, targetHeight, true)
+
+        // 中程度のコントラスト強化
+        val result = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(result)
+        val paint = Paint()
+
+        val colorMatrix = ColorMatrix(floatArrayOf(
+            3.5f, 3.5f, 3.5f, 0f, -180f,
+            3.5f, 3.5f, 3.5f, 0f, -180f,
+            3.5f, 3.5f, 3.5f, 0f, -180f,
+            0f, 0f, 0f, 1f, 0f
+        ))
+        paint.colorFilter = ColorMatrixColorFilter(colorMatrix)
+        canvas.drawBitmap(scaledBitmap, 0f, 0f, paint)
+
+        if (scaledBitmap != bitmap) scaledBitmap.recycle()
+        return result
     }
 
     /**
