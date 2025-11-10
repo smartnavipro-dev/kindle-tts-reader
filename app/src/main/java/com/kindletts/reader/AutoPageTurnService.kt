@@ -40,12 +40,27 @@ class AutoPageTurnService : AccessibilityService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        debugLog("onStartCommand called", intent?.action)
+        debugLog("onStartCommand called", "action: ${intent?.action}, hasIntent: ${intent != null}")
 
         when (intent?.action) {
-            "NEXT_PAGE" -> performNextPageGesture()
-            "PREVIOUS_PAGE" -> performPreviousPageGesture()
-            "TAP_CENTER" -> performCenterTapGesture()
+            "NEXT_PAGE" -> {
+                debugLog("Executing NEXT_PAGE action")
+                performNextPageGesture()
+            }
+            "PREVIOUS_PAGE" -> {
+                debugLog("Executing PREVIOUS_PAGE action")
+                performPreviousPageGesture()
+            }
+            "TAP_CENTER" -> {
+                debugLog("Executing TAP_CENTER action")
+                performCenterTapGesture()
+            }
+            null -> {
+                debugLog("Received null action")
+            }
+            else -> {
+                debugLog("Unknown action received", intent.action)
+            }
         }
 
         return START_NOT_STICKY
@@ -60,24 +75,18 @@ class AutoPageTurnService : AccessibilityService() {
         }
 
         try {
-            // 画面の右側をタップしてページをめくる
+            // ✅ FIX: Kindleアプリはスワイプでページめくりするため、タップからスワイプに変更
             val displayMetrics = resources.displayMetrics
             val screenWidth = displayMetrics.widthPixels.toFloat()
             val screenHeight = displayMetrics.heightPixels.toFloat()
 
-            // 右側の中央あたりをタップ
-            val x = screenWidth * 0.85f
+            // 画面中央で右から左へスワイプ（次ページ）
+            val startX = screenWidth * 0.8f
+            val endX = screenWidth * 0.2f
             val y = screenHeight * 0.5f
 
-            performTapGesture(x, y) { success ->
-                if (success) {
-                    debugLog("Next page gesture succeeded")
-                } else {
-                    debugLog("Next page gesture failed")
-                    // フォールバック: スワイプジェスチャー
-                    performSwipeGesture(screenWidth * 0.8f, y, screenWidth * 0.2f, y)
-                }
-            }
+            debugLog("Next page swipe", "from ($startX, $y) to ($endX, $y)")
+            performSwipeGesture(startX, y, endX, y)
 
         } catch (e: Exception) {
             handleError("次ページジェスチャーエラー", e)
@@ -93,24 +102,18 @@ class AutoPageTurnService : AccessibilityService() {
         }
 
         try {
-            // 画面の左側をタップしてページを戻る
+            // ✅ FIX: Kindleアプリはスワイプでページめくりするため、タップからスワイプに変更
             val displayMetrics = resources.displayMetrics
             val screenWidth = displayMetrics.widthPixels.toFloat()
             val screenHeight = displayMetrics.heightPixels.toFloat()
 
-            // 左側の中央あたりをタップ
-            val x = screenWidth * 0.15f
+            // 画面中央で左から右へスワイプ（前ページ）
+            val startX = screenWidth * 0.2f
+            val endX = screenWidth * 0.8f
             val y = screenHeight * 0.5f
 
-            performTapGesture(x, y) { success ->
-                if (success) {
-                    debugLog("Previous page gesture succeeded")
-                } else {
-                    debugLog("Previous page gesture failed")
-                    // フォールバック: スワイプジェスチャー
-                    performSwipeGesture(screenWidth * 0.2f, y, screenWidth * 0.8f, y)
-                }
-            }
+            debugLog("Previous page swipe", "from ($startX, $y) to ($endX, $y)")
+            performSwipeGesture(startX, y, endX, y)
 
         } catch (e: Exception) {
             handleError("前ページジェスチャーエラー", e)
