@@ -8,6 +8,8 @@ import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.util.Log
@@ -148,25 +150,15 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private fun startReading() {
         debugLog("Starting reading mode")
 
-        // 画面キャプチャが開始されていない場合は自動的に要求
-        if (!OverlayService.isRunning) {
-            debugLog("OverlayService not running, requesting screen capture")
+        // ✅ v1.0.18 FIX: 常に既存サービスを停止してから新規作成
+        // これにより、「×」ボタン後の再起動でもクリーンな状態から開始できる
+        debugLog("Stopping existing service (if any) and requesting new screen capture")
+        stopService(Intent(this, OverlayService::class.java))
+
+        // サービスの完全停止を待つ
+        Handler(Looper.getMainLooper()).postDelayed({
             requestScreenCapturePermission()
-            return
-        }
-
-        isReading = true
-        isPaused = false
-        updateUIState()
-        updateStatusText("読み上げ中...")
-
-        // OverlayServiceに読み上げ開始を通知
-        val intent = Intent(this, OverlayService::class.java)
-        intent.action = "START_READING"
-        intent.putExtra("reading_speed", currentReadingSpeed)
-        intent.putExtra("auto_page_turn", autoPageTurnEnabled)
-        intent.putExtra("page_direction", pageDirection)
-        startService(intent)
+        }, 300)
     }
 
     private fun sendPageDirectionToService() {
@@ -424,6 +416,16 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         super.onResume()
         updatePermissionButtonStates()
         checkAccessibilityServiceEnabled()
+
+        // ✅ v1.0.18 FIX: サービスが停止していたらMainActivityの状態をリセット
+        // 「×」ボタンでサービスが停止された場合に対応
+        if (!OverlayService.isRunning && isReading) {
+            debugLog("Service stopped externally, resetting MainActivity state")
+            isReading = false
+            isPaused = false
+            updateStatusText("準備完了")
+        }
+
         updateUIState()  // ✅ FIX: Update UI state after checking permissions
     }
 

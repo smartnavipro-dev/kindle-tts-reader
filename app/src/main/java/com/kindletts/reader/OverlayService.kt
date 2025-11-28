@@ -22,6 +22,7 @@ import androidx.core.app.NotificationCompat
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions
+import com.kindletts.reader.ocr.TextCorrector
 import java.util.*
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
@@ -62,6 +63,8 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
     private var lastRecognizedText = ""
     private var ocrExecutor: ScheduledExecutorService? = null
     private var isCapturing = false
+    // v1.0.17: テキスト補正機能, v1.0.39: contextパラメータ追加
+    private val textCorrector by lazy { TextCorrector(this) }
 
     // 状態管理
     private data class AppState(
@@ -124,8 +127,15 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                 pageDirection = intent.getStringExtra("page_direction") ?: "right_to_next"
 
                 if (data != null) {
+                    // ✅ v1.0.18 FIX: 既存のMediaProjectionをクリーンアップしてから新規作成
+                    cleanupMediaProjection()
+
                     startScreenCapture(data)
-                    createOverlay()
+
+                    // オーバーレイが既に存在する場合は再作成しない
+                    if (overlayView == null) {
+                        createOverlay()
+                    }
 
                     // 画面キャプチャとTTSの初期化を待ってから読み上げ開始
                     mainHandler.postDelayed({
@@ -294,6 +304,9 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             // 閉じるボタン
             btnClose?.setOnClickListener {
                 debugLog("Close button clicked")
+                // ✅ v1.0.18 FIX: サービス終了前にisRunningをfalseに設定
+                // これにより、MainActivityが再起動時に画面キャプチャを再要求できる
+                isRunning = false
                 stopSelf()
             }
 
@@ -561,23 +574,22 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
     private fun preprocessBitmapForOCR(bitmap: Bitmap): Bitmap {
         try {
             val startTime = System.currentTimeMillis()
-            debugLog("v1.0.16 Image Rotation OCR", "Starting")
+            debugLog("v1.0.29 OCR preprocessing", "Starting (NO rotation)")
 
-            // ステップ1: 日本語Kindleは常に縦書きと仮定して回転
-            // （エッジ検出は不正確なため削除）
-            wasImageRotated = true
-            val rotatedBitmap = rotateBitmap90Clockwise(bitmap)
-            debugLog("Image rotated", "90 degrees clockwise for vertical text")
+            // ✅ v1.0.28: 画像回転を削除 - ML Kitは縦書きを直接認識可能
+            // 回転により座標系が混乱していたため、回転を無効化
+            // 4倍スケーリングを実行し、OCR座標もスケール後の値となる
+            wasImageRotated = false
 
-            // ステップ2: 適度な前処理（回転により精度が上がるため、過度な処理は不要）
-            val processedBitmap = applyBalancedPreprocessing(rotatedBitmap)
+            // 前処理のみ実行（4倍スケール + コントラスト調整）
+            val processedBitmap = applyBalancedPreprocessing(bitmap)
 
-            debugLog("v1.0.16 completed", "Rotated: true, Time: ${System.currentTimeMillis() - startTime}ms")
+            debugLog("v1.0.29 completed", "No rotation, Time: ${System.currentTimeMillis() - startTime}ms")
 
             return processedBitmap
 
         } catch (e: Exception) {
-            debugLog("v1.0.16 preprocessing failed", e.message)
+            debugLog("v1.0.28 preprocessing failed", e.message)
             wasImageRotated = false
             return bitmap
         }
@@ -1067,25 +1079,31 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                 // 縦書き対応: テキストブロックを位置でソート
                 val extractedText = extractTextWithVerticalSupport(visionText)
 
-                // ✨ 詳細なデバッグログ
+                // ✨ v1.0.33: Phase 3対応 - OCR結果オブジェクトを渡して信頼度ベース補正を有効化
+                val correctedText = textCorrector.correctText(extractedText, visionText)
+                val stats = textCorrector.getCorrectionStats(extractedText, correctedText)
+
+                // ✨ 詳細なデバッグログ（補正情報を含む）
                 debugLog("OCR success", """
-                    TextLength: ${extractedText.length},
-                    Preview: ${extractedText.take(100).replace("\n", " | ")},
-                    Changed: ${extractedText != lastRecognizedText}
+                    TextLength: ${correctedText.length},
+                    Preview: ${correctedText.take(100).replace("\n", " | ")},
+                    Changed: ${correctedText != lastRecognizedText},
+                    Corrections: ${stats.totalCorrections} (Economic: ${stats.economicTermsFixed}, Katakana: ${stats.katakanaFixed})
                 """.trimIndent())
 
-                if (extractedText.isNotEmpty() && extractedText != lastRecognizedText && isReading && !isPaused) {
-                    lastRecognizedText = extractedText
-                    val sentences = splitIntoSentences(extractedText)
+                // ✨ v1.0.17: 補正後のテキストを使用
+                if (correctedText.isNotEmpty() && correctedText != lastRecognizedText && isReading && !isPaused) {
+                    lastRecognizedText = correctedText
+                    val sentences = splitIntoSentences(correctedText)
                     if (sentences.isNotEmpty()) {
                         debugLog("Speaking", "Total sentences: ${sentences.size}")
                         speakSentences(sentences)
                     } else {
                         debugLog("No sentences", "Text could not be split into sentences")
                     }
-                } else if (extractedText.isEmpty()) {
+                } else if (correctedText.isEmpty()) {
                     debugLog("OCR result empty", "No text extracted from image")
-                } else if (extractedText == lastRecognizedText) {
+                } else if (correctedText == lastRecognizedText) {
                     debugLog("OCR duplicate", "Same text as previous capture")
                 }
 
@@ -1128,26 +1146,59 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             AvgConf: ${"%.2f".format(avgConfidence)}
         """.trimIndent())
 
-        // テキストブロックの配置を分析
-        val avgWidth = blocks.map { it.boundingBox?.width() ?: 0 }.average()
-        val avgHeight = blocks.map { it.boundingBox?.height() ?: 0 }.average()
+        // ✅ v1.0.22: 画面サイズを取得
+        val displayMetrics = resources.displayMetrics
+        val screenWidth = displayMetrics.widthPixels
+        val screenHeight = displayMetrics.heightPixels
 
-        // 縦書き判定: ブロックの高さが幅より大きい場合
-        val isVertical = avgHeight > avgWidth * 1.5
+        // ✅ v1.0.30: デバッグ - 全ブロックの座標と完全なテキストを出力
+        blocks.forEachIndexed { index, block ->
+            val box = block.boundingBox
+            if (box != null) {
+                debugLog("Block #$index coords", "L:${box.left}, T:${box.top}, R:${box.right}, B:${box.bottom}, W:${box.width()}, H:${box.height()}, Ratio:${"%.2f".format(box.height().toDouble() / box.width().toDouble())}")
+                debugLog("Block #$index text", block.text.replace("\n", "\\n"))
+            }
+        }
 
-        debugLog("Text orientation", "Vertical: $isVertical, AvgW: ${"%.1f".format(avgWidth)}, AvgH: ${"%.1f".format(avgHeight)}")
+        // ✅ v1.0.28: 4倍スケーリングを考慮して比率を計算
+        val scaleFactor = 4
+        val scaledScreenWidth = screenWidth * scaleFactor
+        val scaledScreenHeight = screenHeight * scaleFactor
+
+        val heightWidthRatios = blocks.mapNotNull { block ->
+            val box = block.boundingBox
+            if (box != null && box.width() > 0) {
+                // スケール後の画面サイズの1.5倍を超える座標は異常値として除外
+                val isValid = box.left >= 0 && box.top >= 0 &&
+                        box.right <= scaledScreenWidth * 1.5 && box.bottom <= scaledScreenHeight * 1.5
+                if (isValid) {
+                    box.height().toDouble() / box.width().toDouble()
+                } else {
+                    debugLog("v1.0.28 Filtered", "R:${box.right}, B:${box.bottom}, Limit: ${scaledScreenWidth * 1.5}x${scaledScreenHeight * 1.5}")
+                    null
+                }
+            } else {
+                null
+            }
+        }
+
+        // 中央値を使って縦書き判定（平均値より異常値に強い）
+        val isVertical = if (heightWidthRatios.isNotEmpty()) {
+            val sortedRatios = heightWidthRatios.sorted()
+            val medianRatio = sortedRatios[sortedRatios.size / 2]
+            medianRatio > 1.5  // 高さが幅の1.5倍以上なら縦書き
+        } else {
+            false
+        }
+
+        debugLog("Text orientation", "Vertical: $isVertical, MedianRatio: ${"%.2f".format(if (heightWidthRatios.isNotEmpty()) heightWidthRatios.sorted()[heightWidthRatios.size / 2] else 0.0)}, Blocks: ${blocks.size}")
 
         return if (isVertical) {
-            // 縦書き: 右から左、上から下の順でソート
-            blocks.sortedWith(compareByDescending<com.google.mlkit.vision.text.Text.TextBlock> {
-                it.boundingBox?.right ?: 0
-            }.thenBy {
-                it.boundingBox?.top ?: 0
-            })
-                .joinToString("\n") { it.text }
-                .trim()
+            // ✅ v1.0.27: 縦書き - カラムベースのソート
+            // カラムごとにグループ化し、右から左、上から下の順で読む
+            sortVerticalTextByColumns(blocks)
         } else {
-            // 横書き: 上から下、左から右の順でソート
+            // 横書き: 上から下（top座標の昇順）、左から右（left座標の昇順）
             blocks.sortedWith(compareBy<com.google.mlkit.vision.text.Text.TextBlock> {
                 it.boundingBox?.top ?: 0
             }.thenBy {
@@ -1157,6 +1208,148 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                 .trim()
         }
     }
+
+    /**
+     * v1.0.27: 縦書きテキストをカラムベースでソート
+     * - カラムごとにグループ化（X座標の重なりで判定）
+     * - カラムを右から左にソート
+     * - カラム内のブロックを上から下にソート
+     * - ヘッダー/フッターを除外
+     */
+    private fun sortVerticalTextByColumns(blocks: List<com.google.mlkit.vision.text.Text.TextBlock>): String {
+        if (blocks.isEmpty()) return ""
+
+        // Step 1: ヘッダー/フッター/ページ番号を除外
+        val screenHeight = resources.displayMetrics.heightPixels
+        val screenWidth = resources.displayMetrics.widthPixels
+
+        // ✅ v1.0.28: 4倍スケーリングを考慮したフィルタリング
+        // 画像を4倍スケール（1080x2400 → 4320x9600）しているため、
+        // OCR座標もスケール後の値で返ってくる
+        val scaleFactor = 4
+        val scaledScreenWidth = screenWidth * scaleFactor
+        val scaledScreenHeight = screenHeight * scaleFactor
+
+        val filteredBlocks = blocks.filter { block ->
+            val box = block.boundingBox ?: return@filter false
+            val centerY = (box.top + box.bottom) / 2.0
+            val relativeY = centerY / scaledScreenHeight
+
+            // 上下5%の領域を除外（ヘッダー/フッター）
+            relativeY > 0.05 && relativeY < 0.95 &&
+            // 極小ブロック（ページ番号など）を除外（スケール後の値）
+            box.height() > 120 &&  // 30px * 4 = 120px
+            // 座標異常のブロックを除外（スケール後の画面サイズの1.5倍以内）
+            box.right <= scaledScreenWidth * 1.5 && box.bottom <= scaledScreenHeight * 1.5
+        }
+
+        if (filteredBlocks.isEmpty()) return blocks.joinToString("\n") { it.text }.trim()
+
+        debugLog("v1.0.30 Filter", "Original: ${blocks.size}, Filtered: ${filteredBlocks.size}")
+
+        // ✅ v1.0.30改善: 幅が広いBlock（複数列が誤って結合）を各行ごとに分割
+        // これにより、各行が正しいカラムに配置される
+        data class TextItem(val box: android.graphics.Rect, val text: String)
+
+        val textItems = filteredBlocks.flatMap { block ->
+            val lines = block.lines
+            if (lines.size > 1 && (block.boundingBox?.width() ?: 0) > 300) {
+                // 行を右端座標で降順ソート（右→左）してから各行を個別アイテム化
+                val sortedLines = lines.sortedByDescending { it.boundingBox?.right ?: 0 }
+                debugLog("v1.0.30 Block split", "Block width:${block.boundingBox?.width()}, Lines:${lines.size} → Split into ${sortedLines.size} items")
+                sortedLines.mapNotNull { line ->
+                    line.boundingBox?.let { box -> TextItem(box, line.text) }
+                }
+            } else {
+                block.boundingBox?.let { listOf(TextItem(it, block.text)) } ?: emptyList()
+            }
+        }
+
+        // Step 2: TextItemをカラムにグループ化
+        val itemColumns = mutableListOf<MutableList<TextItem>>()
+        textItems.forEach { item ->
+            val matchingColumn = itemColumns.find { column ->
+                column.any { existing ->
+                    horizontalOverlap(item.box, existing.box) > 0.3  // 30%以上の重なり
+                }
+            }
+            if (matchingColumn != null) {
+                matchingColumn.add(item)
+            } else {
+                itemColumns.add(mutableListOf(item))
+            }
+        }
+
+        debugLog("v1.0.30 Columns", "Detected ${itemColumns.size} columns")
+
+        // Step 3: カラムを右から左にソート（各カラムの右端X座標で降順）
+        val sortedColumns = itemColumns.sortedByDescending { column ->
+            column.maxOfOrNull { it.box.right } ?: 0
+        }
+
+        // Step 4: 各カラム内のアイテムを上から下にソート
+        val sortedItems = sortedColumns.flatMap { column ->
+            column.sortedBy { it.box.top }
+        }
+
+        // デバッグ: ソート後の順番を表示
+        debugLog("v1.0.30 Sorted order", sortedItems.mapIndexed { idx, item ->
+            "[$idx] Right:${item.box.right}, Y:${item.box.top}, Text:${item.text.take(10)}"
+        }.joinToString(" | "))
+
+        return sortedItems.joinToString("\n") { it.text }.trim()
+    }
+
+    /**
+     * v1.0.27: ブロックをカラムにクラスタリング
+     * 水平方向の重なりが30%以上なら同じカラムと判定
+     */
+    private fun clusterIntoColumns(blocks: List<com.google.mlkit.vision.text.Text.TextBlock>): List<List<com.google.mlkit.vision.text.Text.TextBlock>> {
+        if (blocks.isEmpty()) return emptyList()
+
+        val columns = mutableListOf<MutableList<com.google.mlkit.vision.text.Text.TextBlock>>()
+
+        blocks.forEach { block ->
+            val box = block.boundingBox ?: return@forEach
+
+            // 既存のカラムで水平方向の重なりがあるか探す
+            val matchingColumn = columns.find { column ->
+                column.any { existingBlock ->
+                    val existingBox = existingBlock.boundingBox ?: return@any false
+                    horizontalOverlap(box, existingBox) > 0.3  // 30%以上の重なり
+                }
+            }
+
+            if (matchingColumn != null) {
+                matchingColumn.add(block)
+            } else {
+                // 新しいカラムを作成
+                columns.add(mutableListOf(block))
+            }
+        }
+
+        return columns
+    }
+
+    /**
+     * v1.0.27: 2つのRectの水平方向の重なり率を計算（0.0～1.0）
+     */
+    private fun horizontalOverlap(box1: android.graphics.Rect, box2: android.graphics.Rect): Double {
+        val overlapLeft = maxOf(box1.left, box2.left)
+        val overlapRight = minOf(box1.right, box2.right)
+        val overlapWidth = maxOf(0, overlapRight - overlapLeft)
+
+        val box1Width = box1.width()
+        val box2Width = box2.width()
+        val minWidth = minOf(box1Width, box2Width)
+
+        return if (minWidth > 0) overlapWidth.toDouble() / minWidth else 0.0
+    }
+
+    /**
+     * v1.0.27: Rectの中心X座標を取得
+     */
+    private fun android.graphics.Rect.centerX(): Int = (left + right) / 2
 
     private fun splitIntoSentences(text: String): List<String> {
         return text.split(Regex("[。！？\\.\\!\\?]"))
@@ -1406,6 +1599,47 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         Log.d(TAG, "[$TAG] $message ${if (data != null) ": $data" else ""}")
     }
 
+    /**
+     * v1.0.18: MediaProjection関連リソースをクリーンアップ
+     * 新しい画面キャプチャを開始する前に、既存のリソースを解放する
+     */
+    private fun cleanupMediaProjection() {
+        debugLog("Cleaning up MediaProjection resources")
+
+        // OCR停止
+        stopAutoOCR()
+
+        // VirtualDisplay解放
+        try {
+            virtualDisplay?.release()
+            virtualDisplay = null
+        } catch (e: Exception) {
+            debugLog("Error releasing VirtualDisplay", e.message)
+        }
+
+        // MediaProjection停止
+        try {
+            mediaProjection?.stop()
+            mediaProjection = null
+        } catch (e: Exception) {
+            debugLog("Error stopping MediaProjection", e.message)
+        }
+
+        // ImageReader解放
+        try {
+            imageReader?.close()
+            imageReader = null
+        } catch (e: Exception) {
+            debugLog("Error closing ImageReader", e.message)
+        }
+
+        // 状態リセット
+        appState.screenCaptureActive = false
+        isCapturing = false
+
+        debugLog("MediaProjection cleanup completed")
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         isRunning = false
@@ -1417,33 +1651,11 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             stopReading()
         }
 
-        // リソース解放
-        stopAutoOCR()
-
         // Handler の保留中タスクをクリア
         mainHandler.removeCallbacksAndMessages(null)
 
-        // VirtualDisplay と MediaProjection の解放
-        try {
-            virtualDisplay?.release()
-            virtualDisplay = null
-        } catch (e: Exception) {
-            debugLog("Error releasing VirtualDisplay", e.message)
-        }
-
-        try {
-            mediaProjection?.stop()
-            mediaProjection = null
-        } catch (e: Exception) {
-            debugLog("Error stopping MediaProjection", e.message)
-        }
-
-        try {
-            imageReader?.close()
-            imageReader = null
-        } catch (e: Exception) {
-            debugLog("Error closing ImageReader", e.message)
-        }
+        // MediaProjection関連リソースの解放
+        cleanupMediaProjection()
 
         // オーバーレイビューの削除
         overlayView?.let {
