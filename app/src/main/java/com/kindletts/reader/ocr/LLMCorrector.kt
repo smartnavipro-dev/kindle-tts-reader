@@ -160,10 +160,11 @@ class LLMCorrector(private val context: Context) {
         val timestamp: Long = System.currentTimeMillis()
     )
 
-    // v1.0.40: Gemini 1.5 Flash モデル（クラウドAPI）
+    // v1.0.40: Gemini 2.5 Flash モデル（クラウドAPI）
+    // v1.0.46: gemini-1.5-flash → gemini-2.5-flash（1.5モデルは2025年9月に廃止）
     private val generativeModel: GenerativeModel by lazy {
         GenerativeModel(
-            modelName = "gemini-1.5-flash",
+            modelName = "gemini-2.5-flash",
             apiKey = BuildConfig.GEMINI_API_KEY,
             generationConfig = generationConfig {
                 temperature = 0.1f  // 低温度で決定論的な出力
@@ -1002,7 +1003,7 @@ JSON形式で出力:
         try {
             // 既存のキャッシュデータを読み込み
             val cacheString = prefs.getString(CACHE_KEY, "{}")
-            val cacheData = JSONObject(cacheString)
+            val cacheData = JSONObject(cacheString ?: "{}")
 
             // 新しいエントリを追加
             val entryJson = JSONObject()
