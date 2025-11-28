@@ -11,10 +11,15 @@ android {
         applicationId "com.kindletts.reader"
         minSdk 21
         targetSdk 34
-        versionCode 17
-        versionName "1.0.16"
+        versionCode 48
+        versionName "1.0.45-test"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        // v1.0.40: Gemini API Key configuration
+        // Set your API key in local.properties: GEMINI_API_KEY=your_key_here
+        def geminiApiKey = project.findProperty("GEMINI_API_KEY") ?: "YOUR_API_KEY_HERE"
+        buildConfigField "String", "GEMINI_API_KEY", "\"${geminiApiKey}\""
     }
 
     signingConfigs {
@@ -45,6 +50,13 @@ android {
 
     buildFeatures {
         viewBinding true
+        buildConfig true  // v1.0.40: Enable BuildConfig for API key
+    }
+
+    packagingOptions {
+        resources {
+            excludes += ['META-INF/CONTRIBUTORS.md', 'META-INF/LICENSE.md', 'META-INF/NOTICE.md']
+        }
     }
 }
 
@@ -58,6 +70,13 @@ dependencies {
 
     // ML Kit Text Recognition for OCR (Japanese support)
     implementation 'com.google.mlkit:text-recognition-japanese:16.0.0'
+
+    // Phase 2: Kuromoji for morphological analysis (v1.0.32)
+    implementation 'com.atilika.kuromoji:kuromoji-ipadic:0.9.0'
+
+    // v1.0.40: Google AI SDK for Gemini integration
+    implementation 'com.google.ai.client.generativeai:generativeai:0.1.2'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
 
     // Permission handling
     implementation 'androidx.activity:activity-ktx:1.8.1'

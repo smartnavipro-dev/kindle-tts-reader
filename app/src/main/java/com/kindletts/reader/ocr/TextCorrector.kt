@@ -1,0 +1,1473 @@
+package com.kindletts.reader.ocr
+
+import android.util.Log
+import com.google.mlkit.vision.text.Text
+
+/**
+ * OCR認識後のテキスト補正クラス
+ * v1.0.17: 経済用語・カタカナの誤認識を自動修正
+ * v1.0.31: Phase 1 - 視覚的類似性パターン一般化
+ * v1.0.32: Phase 2 - 形態素解析による未知語検出
+ * v1.0.33: Phase 3 - 信頼度ベース候補選択
+ * v1.0.39: Phase 1信頼度スコアリング + LLM統合
+ */
+class TextCorrector(private val context: android.content.Context) {
+
+    companion object {
+        private const val TAG = "KindleTTS_TextCorrector"
+
+        /**
+         * v1.0.37: Phase 2無効化フラグ
+         * 理由: Kuromojiが誤認識テキストを既知単語として分割するため、
+         * Phase 2の検出ロジックが機能しない（実測補正率0%）
+         * Phase 1のみで十分な精度（57-85%）を達成できる
+         */
+        private const val ENABLE_PHASE2 = false
+
+        /**
+         * v1.0.39: LLM補正の有効化フラグ
+         * v1.0.40: Gemini API統合により有効化
+         */
+        private const val ENABLE_LLM_CORRECTION = true
+
+        /**
+         * v1.0.39: CorrectionValidator有効化フラグ
+         */
+        private const val ENABLE_VALIDATION = true
+
+        /**
+         * v1.0.39: LLM補正を試行する信頼度閾値
+         * Phase 1の信頼度がこれ未満の場合、LLM補正を試行
+         */
+        private const val MIN_CONFIDENCE_FOR_PHASE1 = 0.7
+
+        // Phase 2: 形態素解析器（遅延初期化）
+        private val morphAnalyzer: MorphologicalAnalyzer by lazy {
+            MorphologicalAnalyzer()
+        }
+
+        // Phase 3: 信頼度解析器（遅延初期化）
+        private val confidenceAnalyzer: ConfidenceAnalyzer by lazy {
+            ConfidenceAnalyzer()
+        }
+
+        /**
+         * Phase 1: パターンベース補正ルール (v1.0.31, v1.0.38大幅拡張, v1.0.39順序最適化)
+         * 類似漢字グループを使った一般化パターン
+         * 目標: 経済用語150語以上カバー、補正率85-90%
+         *
+         * v1.0.39最適化:
+         * - 頻出パターンを上位に配置（実測データに基づく）
+         * - 処理時間: 20-30%削減予想
+         */
+        private val generalizedPatterns = listOf(
+            // ============================================================
+            // 最頻出パターン（Top 10）- v1.0.35/v1.0.36実機テストで確認
+            // ============================================================
+
+            // 1. 需要パターン（最頻出）
+            GeneralizedRule(
+                pattern = Regex("[講書霜艦需能][要婁]"),
+                correct = "需要",
+                description = "需要の誤認識"
+            ),
+
+            // 2. 価格パターン（最頻出）
+            GeneralizedRule(
+                pattern = Regex("[再価洒偏海済梅恒][格将終]"),
+                correct = "価格",
+                description = "価格の誤認識"
+            ),
+
+            // 3. 経済パターン（頻出）
+            GeneralizedRule(
+                pattern = Regex("[経稲雑][演済潜]"),
+                correct = "経済",
+                description = "経済の誤認識"
+            ),
+
+            // 4. 経済学パターン（頻出）
+            GeneralizedRule(
+                pattern = Regex("[経稲雑][演済潜][学単]"),
+                correct = "経済学",
+                description = "経済学の誤認識"
+            ),
+
+            // 5. 供給パターン（頻出）
+            GeneralizedRule(
+                pattern = Regex("[供共][靖給絵紛]"),
+                correct = "供給",
+                description = "供給の誤認識"
+            ),
+
+            // 6. 市場パターン（頻出）
+            GeneralizedRule(
+                pattern = Regex("[斉市肯][場堵揚]"),
+                correct = "市場",
+                description = "市場の誤認識"
+            ),
+
+            // 7. 効果パターン（頻出）
+            GeneralizedRule(
+                pattern = Regex("[祝勅効勃課][歌果呆]"),
+                correct = "効果",
+                description = "効果の誤認識"
+            ),
+
+            // 8. 弾力性パターン（頻出）
+            GeneralizedRule(
+                pattern = Regex("[無弾単][力刀][性住]"),
+                correct = "弾力性",
+                description = "弾力性の誤認識"
+            ),
+
+            // 9. 影響パターン（頻出）
+            GeneralizedRule(
+                pattern = Regex("[絵影][響喬]"),
+                correct = "影響",
+                description = "影響の誤認識"
+            ),
+
+            // 10. 法則パターン（頻出）
+            GeneralizedRule(
+                pattern = Regex("[法洪][則測貝]"),
+                correct = "法則",
+                description = "法則の誤認識"
+            ),
+
+            // ============================================================
+            // 基本経済用語（残り）
+            // ============================================================
+
+            // 値段パターン
+            GeneralizedRule(
+                pattern = Regex("[植催値]段"),
+                correct = "値段",
+                description = "値段の誤認識"
+            ),
+
+            // 値札パターン
+            GeneralizedRule(
+                pattern = Regex("[植催値]札"),
+                correct = "値札",
+                description = "値札の誤認識"
+            ),
+
+            // 値引きパターン
+            GeneralizedRule(
+                pattern = Regex("[植催値][引弓]き"),
+                correct = "値引き",
+                description = "値引きの誤認識"
+            ),
+
+            // 割引パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[新都割刻][引弓]"),
+                correct = "割引",
+                description = "割引の誤認識"
+            ),
+
+            // ============================================================
+            // マクロ経済学用語
+            // ============================================================
+
+            // 経済パターン（拡張）
+            GeneralizedRule(
+                pattern = Regex("[経稲雑][演済潜]"),
+                correct = "経済",
+                description = "経済の誤認識"
+            ),
+
+            // 経済学パターン（拡張）
+            GeneralizedRule(
+                pattern = Regex("[経稲雑][演済潜][学単]"),
+                correct = "経済学",
+                description = "経済学の誤認識"
+            ),
+
+            // 景気パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[景影京][気氛]"),
+                correct = "景気",
+                description = "景気の誤認識"
+            ),
+
+            // 不況パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[不木][況洗]"),
+                correct = "不況",
+                description = "不況の誤認識"
+            ),
+
+            // 好況パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[好妤][況洗]"),
+                correct = "好況",
+                description = "好況の誤認識"
+            ),
+
+            // インフレパターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("イン[フブ][レし]"),
+                correct = "インフレ",
+                description = "インフレの誤認識"
+            ),
+
+            // デフレパターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[デテ][フブ][レし]"),
+                correct = "デフレ",
+                description = "デフレの誤認識"
+            ),
+
+            // 物価パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[物勿][価再洒]"),
+                correct = "物価",
+                description = "物価の誤認識"
+            ),
+
+            // 金利パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[金釜][利和]"),
+                correct = "金利",
+                description = "金利の誤認識"
+            ),
+
+            // 財政パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[財柑][政改]"),
+                correct = "財政",
+                description = "財政の誤認識"
+            ),
+
+            // 税金パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[税祝][金釜]"),
+                correct = "税金",
+                description = "税金の誤認識"
+            ),
+
+            // 所得パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[所断][得待]"),
+                correct = "所得",
+                description = "所得の誤認識"
+            ),
+
+            // 国債パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[国固囲][債僧]"),
+                correct = "国債",
+                description = "国債の誤認識"
+            ),
+
+            // 赤字パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[赤亦][字宇]"),
+                correct = "赤字",
+                description = "赤字の誤認識"
+            ),
+
+            // 黒字パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[黒里墨][字宇]"),
+                correct = "黒字",
+                description = "黒字の誤認識"
+            ),
+
+            // 通貨パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[通迫][貨貝]"),
+                correct = "通貨",
+                description = "通貨の誤認識"
+            ),
+
+            // 貨幣パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[貨貝][幣常]"),
+                correct = "貨幣",
+                description = "貨幣の誤認識"
+            ),
+
+            // ============================================================
+            // ミクロ経済学用語
+            // ============================================================
+
+            // 効果パターン（拡張）
+            GeneralizedRule(
+                pattern = Regex("[祝勅効勃課][歌果呆]"),
+                correct = "効果",
+                description = "効果の誤認識"
+            ),
+
+            // 弾力性パターン（拡張）
+            GeneralizedRule(
+                pattern = Regex("[無弾単][力刀][性住]"),
+                correct = "弾力性",
+                description = "弾力性の誤認識"
+            ),
+
+            // 競争パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[競兢][争事]"),
+                correct = "競争",
+                description = "競争の誤認識"
+            ),
+
+            // 独占パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[独猫][占古]"),
+                correct = "独占",
+                description = "独占の誤認識"
+            ),
+
+            // 寡占パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[寡募][占古]"),
+                correct = "寡占",
+                description = "寡占の誤認識"
+            ),
+
+            // 限界パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[限眼][界堺]"),
+                correct = "限界",
+                description = "限界の誤認識"
+            ),
+
+            // 費用パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[費贅][用甩]"),
+                correct = "費用",
+                description = "費用の誤認識"
+            ),
+
+            // 収入パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[収牧][入λ]"),
+                correct = "収入",
+                description = "収入の誤認識"
+            ),
+
+            // 利潤パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[利和][潤閏]"),
+                correct = "利潤",
+                description = "利潤の誤認識"
+            ),
+
+            // 損失パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[損員][失矢]"),
+                correct = "損失",
+                description = "損失の誤認識"
+            ),
+
+            // 消費パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[消清][費贅]"),
+                correct = "消費",
+                description = "消費の誤認識"
+            ),
+
+            // 生産パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[生主][産崖]"),
+                correct = "生産",
+                description = "生産の誤認識"
+            ),
+
+            // ============================================================
+            // 貿易・国際経済
+            // ============================================================
+
+            // 輸出パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[輸愉][出山]"),
+                correct = "輸出",
+                description = "輸出の誤認識"
+            ),
+
+            // 輸入パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[輸愉][入λ]"),
+                correct = "輸入",
+                description = "輸入の誤認識"
+            ),
+
+            // 貿易パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[貿貫][易昌]"),
+                correct = "貿易",
+                description = "貿易の誤認識"
+            ),
+
+            // 関税パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[関開][税祝]"),
+                correct = "関税",
+                description = "関税の誤認識"
+            ),
+
+            // 為替パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[為烏][替曹]"),
+                correct = "為替",
+                description = "為替の誤認識"
+            ),
+
+            // ============================================================
+            // その他頻出用語
+            // ============================================================
+
+            // 期待パターン
+            GeneralizedRule(
+                pattern = Regex("[舞期][待持]"),
+                correct = "期待",
+                description = "期待の誤認識"
+            ),
+
+            // 影響パターン
+            GeneralizedRule(
+                pattern = Regex("[絵影][響喬]"),
+                correct = "影響",
+                description = "影響の誤認識"
+            ),
+
+            // 土地パターン
+            GeneralizedRule(
+                pattern = Regex("[士土][地坪]"),
+                correct = "土地",
+                description = "土地の誤認識"
+            ),
+
+            // 学問パターン
+            GeneralizedRule(
+                pattern = Regex("[学単][間問]"),
+                correct = "学問",
+                description = "学問の誤認識"
+            ),
+
+            // 投資パターン（拡張）
+            GeneralizedRule(
+                pattern = Regex("[投授][育質資贅]"),
+                correct = "投資",
+                description = "投資の誤認識"
+            ),
+
+            // 市場パターン（拡張）
+            GeneralizedRule(
+                pattern = Regex("[斉市肯][場堵揚]"),
+                correct = "市場",
+                description = "市場の誤認識"
+            ),
+
+            // 法則パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[法洪][則測貝]"),
+                correct = "法則",
+                description = "法則の誤認識"
+            ),
+
+            // 理論パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[理埋][論輪]"),
+                correct = "理論",
+                description = "理論の誤認識"
+            ),
+
+            // 政府パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[政改][府庁]"),
+                correct = "政府",
+                description = "政府の誤認識"
+            ),
+
+            // 企業パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[企全][業亘]"),
+                correct = "企業",
+                description = "企業の誤認識"
+            ),
+
+            // 家計パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[家宅][計針]"),
+                correct = "家計",
+                description = "家計の誤認識"
+            ),
+
+            // ============================================================
+            // 動詞・形容詞パターン
+            // ============================================================
+
+            // 増えるパターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[増噌]える"),
+                correct = "増える",
+                description = "増えるの誤認識"
+            ),
+
+            // 減るパターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[減械]る"),
+                correct = "減る",
+                description = "減るの誤認識"
+            ),
+
+            // 減らすパターン
+            GeneralizedRule(
+                pattern = Regex("[械減]らす"),
+                correct = "減らす",
+                description = "減らすの誤認識"
+            ),
+
+            // 上がるパターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[上止]がる"),
+                correct = "上がる",
+                description = "上がるの誤認識"
+            ),
+
+            // 下がるパターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[下卞]がる"),
+                correct = "下がる",
+                description = "下がるの誤認識"
+            ),
+
+            // 高いパターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[高寓]い"),
+                correct = "高い",
+                description = "高いの誤認識"
+            ),
+
+            // 安いパターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[安妾]い"),
+                correct = "安い",
+                description = "安いの誤認識"
+            ),
+
+            // 大きいパターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[大犬]きい"),
+                correct = "大きい",
+                description = "大きいの誤認識"
+            ),
+
+            // 小さいパターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[小少]さい"),
+                correct = "小さい",
+                description = "小さいの誤認識"
+            ),
+
+            // 良いパターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[良艮]い"),
+                correct = "良い",
+                description = "良いの誤認識"
+            ),
+
+            // 悪いパターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[悪惑]い"),
+                correct = "悪い",
+                description = "悪いの誤認識"
+            ),
+
+            // 狭いパターン
+            GeneralizedRule(
+                pattern = Regex("[挟狭]い"),
+                correct = "狭い",
+                description = "狭いの誤認識"
+            ),
+
+            // 買うパターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[買真買]う"),
+                correct = "買う",
+                description = "買うの誤認識"
+            ),
+
+            // 買いたいパターン
+            GeneralizedRule(
+                pattern = Regex("[真買]?[い]?たい"),
+                correct = "買いたい",
+                description = "買いたいの誤認識"
+            ),
+
+            // 売るパターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[売亮]る"),
+                correct = "売る",
+                description = "売るの誤認識"
+            ),
+
+            // ============================================================
+            // 助詞・方向パターン
+            // ============================================================
+
+            // 方向（～の方）パターン（v1.0.38追加）
+            GeneralizedRule(
+                pattern = Regex("[方万万]に"),
+                correct = "方に",
+                description = "方にの誤認識"
+            ),
+
+            // ============================================================
+            // その他（カタカナ、環境、消費財）
+            // ============================================================
+
+            // 酒類パターン
+            GeneralizedRule(
+                pattern = Regex("酒[頼瀬類]"),
+                correct = "酒類",
+                description = "酒類の誤認識"
+            ),
+
+            // ポリ袋パターン
+            GeneralizedRule(
+                pattern = Regex("[ボポ]り袋"),
+                correct = "ポリ袋",
+                description = "ポリ袋の誤認識"
+            ),
+
+            // ポリエチレンパターン
+            GeneralizedRule(
+                pattern = Regex("[ボポ]リエチレン"),
+                correct = "ポリエチレン",
+                description = "ポリエチレンの誤認識"
+            ),
+
+            // 使い捨てパターン（v1.0.31修正: 正しいテキストを除外）
+            GeneralizedRule(
+                pattern = Regex("(?<!使)い捨て|使い拾て"),
+                correct = "使い捨て",
+                description = "使い捨ての誤認識"
+            ),
+
+            // ハッピーアワーパターン
+            GeneralizedRule(
+                pattern = Regex("[くハ][ッツ][ピヒ][ー]?[アマ]ワー"),
+                correct = "ハッピーアワー",
+                description = "ハッピーアワーの誤認識"
+            ),
+
+            // プライムパターン
+            GeneralizedRule(
+                pattern = Regex("[ブプ]ライ[ム厶]"),
+                correct = "プライム",
+                description = "プライムの誤認識"
+            ),
+
+            // 環境への悪パターン
+            GeneralizedRule(
+                pattern = Regex("環境[くへ]の[悪惑]"),
+                correct = "環境への悪",
+                description = "環境への悪の誤認識"
+            )
+        )
+
+        /**
+         * 一般化ルールのデータクラス
+         */
+        data class GeneralizedRule(
+            val pattern: Regex,
+            val correct: String,
+            val description: String
+        )
+
+        /**
+         * 経済用語の誤認識辞書（Phase 1補完, v1.0.38大幅拡張）
+         * generalizedPatternsでカバーできない特定パターンを補正
+         */
+        private val economicTermsDict = mapOf(
+            // ============================================================
+            // 需要・供給・価格
+            // ============================================================
+
+            // 需要関連
+            "講要" to "需要",
+            "書要" to "需要",
+            "霜要" to "需要",
+            "需婁" to "需要",
+            "霜婁" to "需要",
+            "艦要" to "需要",
+            "能要" to "需要",  // v1.0.35実機テスト
+
+            // 供給関連
+            "供靖" to "供給",
+            "共給" to "供給",
+            "供絵" to "供給",
+            "供紛" to "供給",
+
+            // 価格関連
+            "再将" to "価格",
+            "価将" to "価格",
+            "洒格" to "価格",
+            "偏格" to "価格",
+            "海格" to "価格",
+            "梅格" to "価格",  // v1.0.35実機テスト
+            "恒終" to "価格",  // v1.0.35実機テスト
+            "済終" to "価格",
+
+            // 値段・値札・値引き
+            "植段" to "値段",
+            "植札" to "値札",
+            "催引き" to "値引き",
+            "値弓き" to "値引き",
+            "催段" to "値段",
+
+            // 割引関連
+            "都引" to "割引",  // v1.0.35実機テスト
+            "新引" to "割引",
+            "刻引" to "割引",
+            "新記引対豪" to "割引対象",  // v1.0.35実機テスト
+            "都引対豪" to "割引対象",
+            "割引対家" to "割引対象",
+
+            // ============================================================
+            // マクロ経済学用語
+            // ============================================================
+
+            // 経済関連
+            "経演" to "経済",
+            "経潜" to "経済",
+            "雑済" to "経済",
+            "稲済" to "経済",
+            "経演学" to "経済学",
+            "雑済学" to "経済学",
+            "稲済学" to "経済学",
+
+            // 景気関連
+            "景氛" to "景気",
+            "影気" to "景気",
+            "京気" to "景気",
+
+            // 不況・好況
+            "不洗" to "不況",
+            "木況" to "不況",
+            "好洗" to "好況",
+            "妤況" to "好況",
+
+            // インフレ・デフレ
+            "インブレ" to "インフレ",
+            "インフし" to "インフレ",
+            "テフレ" to "デフレ",
+            "デブレ" to "デフレ",
+            "デフし" to "デフレ",
+
+            // 物価・金利
+            "勿価" to "物価",
+            "物再" to "物価",
+            "物洒" to "物価",
+            "釜利" to "金利",
+            "金和" to "金利",
+
+            // 財政・税金
+            "柑政" to "財政",
+            "財改" to "財政",
+            "祝金" to "税金",
+            "税釜" to "税金",
+
+            // 所得・国債
+            "断得" to "所得",
+            "所待" to "所得",
+            "固債" to "国債",
+            "囲債" to "国債",
+            "国僧" to "国債",
+
+            // 赤字・黒字
+            "亦字" to "赤字",
+            "赤宇" to "赤字",
+            "里字" to "黒字",
+            "墨字" to "黒字",
+            "黒宇" to "黒字",
+
+            // 通貨・貨幣
+            "迫貨" to "通貨",
+            "通貝" to "通貨",
+            "貝幣" to "貨幣",
+            "貨常" to "貨幣",
+
+            // ============================================================
+            // ミクロ経済学用語
+            // ============================================================
+
+            // 効果関連
+            "祝歌" to "効果",
+            "勅果" to "効果",
+            "効呆" to "効果",
+            "勃果" to "効果",
+            "課果" to "効果",
+            "課歌" to "効果",
+            "代替祝歌" to "代替効果",
+            "代替勅果" to "代替効果",
+            "所得祝歌" to "所得効果",
+            "所得勅果" to "所得効果",
+
+            // 弾力性関連
+            "無力性" to "弾力性",
+            "単力性" to "弾力性",
+            "弾刀性" to "弾力性",
+            "弾力住" to "弾力性",
+            "価格無力性" to "価格弾力性",
+            "需要の無力性" to "需要の弾力性",
+
+            // 競争・独占・寡占
+            "兢争" to "競争",
+            "競事" to "競争",
+            "猫占" to "独占",
+            "独古" to "独占",
+            "募占" to "寡占",
+            "寡古" to "寡占",
+            "完全兢争" to "完全競争",
+            "完全競事" to "完全競争",
+
+            // 限界・費用
+            "眼界" to "限界",
+            "限堺" to "限界",
+            "贅用" to "費用",
+            "費甩" to "費用",
+            "限眼費用" to "限界費用",
+            "限堺費用" to "限界費用",
+
+            // 収入・利潤・損失
+            "牧入" to "収入",
+            "収λ" to "収入",
+            "和潤" to "利潤",
+            "利閏" to "利潤",
+            "員失" to "損失",
+            "損矢" to "損失",
+
+            // 消費・生産
+            "清費" to "消費",
+            "消贅" to "消費",
+            "主産" to "生産",
+            "生崖" to "生産",
+
+            // ============================================================
+            // 貿易・国際経済
+            // ============================================================
+
+            // 輸出・輸入・貿易
+            "愉出" to "輸出",
+            "輸山" to "輸出",
+            "愉入" to "輸入",
+            "輸λ" to "輸入",
+            "貫易" to "貿易",
+            "貿昌" to "貿易",
+
+            // 関税・為替
+            "開税" to "関税",
+            "関祝" to "関税",
+            "烏替" to "為替",
+            "為曹" to "為替",
+
+            // ============================================================
+            // その他頻出用語
+            // ============================================================
+
+            // 期待・影響
+            "舞待" to "期待",
+            "期持" to "期待",
+            "絵響" to "影響",
+            "影喬" to "影響",
+
+            // 学問・投資・市場
+            "学間" to "学問",
+            "単問" to "学問",
+            "投育" to "投資",
+            "投質" to "投資",
+            "投贅" to "投資",
+            "授資" to "投資",
+            "斉場" to "市場",
+            "市堵" to "市場",
+            "肯場" to "市場",
+            "市揚" to "市場",
+
+            // 法則・理論
+            "洪則" to "法則",
+            "法測" to "法則",
+            "法貝" to "法則",
+            "埋論" to "理論",
+            "理輪" to "理論",
+
+            // 政府・企業・家計
+            "改府" to "政府",
+            "政庁" to "政府",
+            "全業" to "企業",
+            "企亘" to "企業",
+            "宅計" to "家計",
+            "家針" to "家計",
+
+            // 土地・酒類
+            "士地" to "土地",
+            "土坪" to "土地",
+            "酒頼" to "酒類",
+            "酒瀬" to "酒類",
+
+            // ============================================================
+            // 動詞・形容詞の特殊ケース
+            // ============================================================
+
+            // 減らす・買いたい
+            "械らす" to "減らす",
+            "真いたい" to "買いたい",
+            "買たい" to "買いたい",
+            "真う" to "買う",
+
+            // 増える・減る
+            "噌える" to "増える",
+            "械る" to "減る",
+
+            // 高い・安い
+            "寓い" to "高い",
+            "妾い" to "安い",
+            "安いはうに" to "安い方に",  // v1.0.35実機テスト
+            "安いはう" to "安い方",
+            "寓い方" to "高い方",
+
+            // 大きい・小さい
+            "犬きい" to "大きい",
+            "少さい" to "小さい",
+
+            // 良い・悪い
+            "艮い" to "良い",
+            "惑い" to "悪い",
+
+            // 上がる・下がる
+            "止がる" to "上がる",
+            "卞がる" to "下がる",
+
+            // ============================================================
+            // 割引対象の複合パターン
+            // ============================================================
+
+            // 対象関連
+            "対豪" to "対象",
+            "対家" to "対象",
+            "割引対家" to "割引対象"
+        )
+
+        /**
+         * カタカナの誤認識パターン
+         * 長音記号や小文字の誤認識を修正
+         */
+        private val katakanaPatterns = mapOf(
+            // ハッピーアワー系
+            "くッピーマワー" to "ハッピーアワー",
+            "くッピー" to "ハッピー",
+            "マワー" to "アワー",
+            "ハツピー" to "ハッピー",
+            "ハッヒー" to "ハッピー",
+
+            // プライム系
+            "ブライム" to "プライム",
+            "プライ厶" to "プライム",
+            "ブライ厶" to "プライム",
+
+            // エコー系
+            "エコ1" to "エコー",
+            "エコ|" to "エコー",
+
+            // その他頻出カタカナ
+            "スマ1ト" to "スマート",
+            "スマート" to "スマート",  // 正しいもの確認
+            "スピ1カ1" to "スピーカー",
+            "スピーカー" to "スピーカー",  // 正しいもの確認
+            "アマゾン" to "アマゾン",  // 正しいもの確認
+            "デ1" to "デー",
+            "テ1" to "テー",
+
+            // ポリ関連（v1.0.30追加）
+            "ボり袋" to "ポリ袋",
+            "ボリ袋" to "ポリ袋",
+            "ボリエチレン" to "ポリエチレン",
+
+            // 環境関連
+            "環境くの悪" to "環境への悪",
+            "環境への惑" to "環境への悪"
+        )
+
+        /**
+         * 文脈依存の補正パターン (v1.0.38拡張)
+         * 前後の文字から判断して補正
+         */
+        private val contextualPatterns = listOf(
+            // ============================================================
+            // 「～の法則」「～の理論」パターン
+            // ============================================================
+
+            Regex("(講要|書要|霜要|艦要|能要)の[法洪](則|測|貝)") to "需要の法則",
+            Regex("(講要|書要|霜要|艦要|能要)と(供給|共給|供靖)") to "需要と供給",
+            Regex("(講要|書要|霜要|艦要|能要)の(無力性|弾刀性|単力性)") to "需要の弾力性",
+
+            // ============================================================
+            // 価格関連の文脈パターン
+            // ============================================================
+
+            Regex("(再将|価将|洒格|海格|梅格|恒終|済終)が") to "価格が",
+            Regex("(再将|価将|洒格|海格|梅格|恒終|済終)の") to "価格の",
+            Regex("(再将|価将|洒格|海格|梅格|恒終|済終)は") to "価格は",
+            Regex("(再将|価将|洒格|海格|梅格|恒終|済終)を") to "価格を",
+            Regex("(再将|価将|洒格|海格|梅格|恒終|済終)に") to "価格に",
+            Regex("(再将|価将|洒格|海格)(無力性|弾刀性|単力性)") to "価格弾力性",
+            Regex("(再将|価将|洒格|海格)の(無力性|弾刀性)") to "価格の弾力性",
+
+            // ============================================================
+            // 効果関連パターン
+            // ============================================================
+
+            Regex("(祝歌|勅果|効呆|課果)(\\(income effect\\))") to "効果$2",
+            Regex("(祝歌|勅果|効呆|課果)(\\(substitution effect\\))") to "効果$2",
+            Regex("(所得|断得)(祝歌|勅果|課果)") to "所得効果",
+            Regex("代替(祝歌|勅果|効呆|課果)") to "代替効果",
+            Regex("(祝歌|勅果|効呆|課果)がある") to "効果がある",
+            Regex("(祝歌|勅果|効呆|課果)を") to "効果を",
+
+            // ============================================================
+            // 経済学・市場関連パターン
+            // ============================================================
+
+            Regex("(経演|経潜|雑済|稲済)[学単]") to "経済学",
+            Regex("[マミ]クロ(経演|経潜|雑済)[学単]") to "ミクロ経済学",
+            Regex("[マミ][ククウ]ロ(経演|経潜|雑済)[学単]") to "マクロ経済学",
+            Regex("(斉場|市堵|肯場|市揚)の") to "市場の",
+            Regex("(斉場|市堵|肯場|市揚)で") to "市場で",
+            Regex("(斉場|市堵|肯場|市揚)に") to "市場に",
+            Regex("完全(兢争|競事)(斉場|市堵)") to "完全競争市場",
+
+            // ============================================================
+            // 数字・年号パターン
+            // ============================================================
+
+            Regex("一\\s*○\\s*ボン") to "一〇ドル",
+            Regex("([0-9]+)\\s*O\\s*([0-9]+)円") to "$1\u0030$2円",  // 0を正しく補正
+            Regex("([0-9]+)\\s*円") to "$1円",  // スペース削除
+            Regex("1\\s*杯") to "一杯",
+            Regex("二O1○年") to "2010年",
+            Regex("二〇一〇年") to "2010年",
+            Regex("([0-9]{2,3})O([0-9]{1,2})年") to "$1\u0030$2年",  // OをO(ゼロ)に
+            Regex("([0-9]{4})([年月日])") to "$1$2",  // 年月日の正規化
+
+            // ============================================================
+            // 助詞の誤認識パターン
+            // ============================================================
+
+            Regex("(需要|供給|価格|市場)ガ") to "$1が",
+            Regex("(需要|供給|価格|市場)ノ") to "$1の",
+            Regex("(需要|供給|価格|市場)ヲ") to "$1を",
+            Regex("(需要|供給|価格|市場)ニ") to "$1に",
+            Regex("(需要|供給|価格|市場)ハ") to "$1は",
+            Regex("(需要|供給|価格|市場)ヘ") to "$1へ",
+            Regex("(需要|供給|価格|市場)ト") to "$1と",
+
+            // ============================================================
+            // 酒類・商品関連
+            // ============================================================
+
+            Regex("(酒頼|酒瀬)の") to "酒類の",
+            Regex("(酒頼|酒瀬)を") to "酒類を",
+            Regex("(酒頼|酒瀬)に") to "酒類に",
+            Regex("([ボポ]り袋|[ボポ]リエチレン)の") to "ポリ袋の",
+
+            // ============================================================
+            // 複合語パターン
+            // ============================================================
+
+            Regex("(国固囲)(債僧)") to "国債",
+            Regex("(財柑)(政改)") to "財政",
+            Regex("(金釜)(利和)") to "金利",
+            Regex("(通迫)(貨貝)") to "通貨",
+            Regex("([赤亦]字|[黒里墨]字)の") to "赤字の",
+            Regex("([輸愉]出|[輸愉]入)") to "輸出",
+
+            // ============================================================
+            // 動詞・形容詞の文脈パターン
+            // ============================================================
+
+            Regex("([高寓])くなる") to "高くなる",
+            Regex("([安妾])くなる") to "安くなる",
+            Regex("([高寓])まる") to "高まる",
+            Regex("([増噌])える") to "増える",
+            Regex("([減械])る") to "減る",
+            Regex("([買真])いたい") to "買いたい",
+            Regex("([売亮])れる") to "売れる",
+
+            // ============================================================
+            // 割引・対象パターン
+            // ============================================================
+
+            Regex("([新都刻]引|[新都刻][引弓])対(豪|家)") to "割引対象",
+            Regex("([新都刻]引)の") to "割引の",
+            Regex("([新都刻]引)を") to "割引を",
+            Regex("対(豪|家)と") to "対象と",
+
+            // ============================================================
+            // その他頻出パターン
+            // ============================================================
+
+            Regex("([期舞]待|[影絵]響)を") to "$1を",
+            Regex("([期舞]待|[影絵]響)が") to "$1が",
+            Regex("([限眼][界堺])(費贅用|[費贅][用甩])") to "限界費用",
+            Regex("([完宗]全)(兢争|競事)") to "完全競争",
+            Regex("([独猫][占古]|[寡募][占古])") to "独占"
+        )
+    }  // companion object終了
+
+    // ============================================================
+    // v1.0.39: インスタンス変数（LLM補正とバリデーション用）
+    // ============================================================
+
+    // LLM補正器（遅延初期化）
+    private val llmCorrector: LLMCorrector by lazy {
+        LLMCorrector(context)
+    }
+
+    // 補正バリデーター（遅延初期化）
+    private val correctionValidator: CorrectionValidator by lazy {
+        CorrectionValidator()
+    }
+
+    // Phase 1で適用されたパターンを追跡
+    private val appliedPatterns = mutableListOf<String>()
+
+    /**
+     * メイン補正メソッド（文字列のみ）
+     * OCR認識テキストを補正して返す
+     * v1.0.31: Phase 1一般化パターンを優先適用
+     * v1.0.32: Phase 2形態素解析を追加
+     */
+    fun correctText(originalText: String): String {
+        if (originalText.isEmpty()) {
+            return originalText
+        }
+
+        var correctedText = originalText
+
+        // ステップ0: Phase 1 - 一般化パターンの適用（優先）
+        correctedText = applyGeneralizedPatterns(correctedText)
+
+        // ステップ1: 経済用語の単純置換（Phase 1で補完されなかったもの）
+        correctedText = applyEconomicTermsCorrection(correctedText)
+
+        // ステップ2: カタカナパターンの置換
+        correctedText = applyKatakanaCorrection(correctedText)
+
+        // ステップ3: 文脈依存の補正
+        correctedText = applyContextualCorrection(correctedText)
+
+        // ステップ4: Phase 2 - 形態素解析による未知語補正
+        correctedText = applyMorphologicalAnalysis(correctedText)
+
+        // 変更があった場合のみログ出力
+        if (correctedText != originalText) {
+            logCorrections(originalText, correctedText)
+        }
+
+        return correctedText
+    }
+
+    /**
+     * メイン補正メソッド（OCR結果オブジェクト付き）
+     * v1.0.33: Phase 3信頼度ベース補正を追加
+     * v1.0.39: 信頼度スコアリング + LLM統合 + バリデーション
+     */
+    fun correctText(originalText: String, ocrResult: Text?): String {
+        if (originalText.isEmpty()) {
+            return originalText
+        }
+
+        var correctedText = originalText
+
+        // ステップ0: Phase 1 - 一般化パターンの適用（優先）
+        correctedText = applyGeneralizedPatterns(correctedText)
+
+        // ステップ1: 経済用語の単純置換（Phase 1で補完されなかったもの）
+        correctedText = applyEconomicTermsCorrection(correctedText)
+
+        // ステップ2: カタカナパターンの置換
+        correctedText = applyKatakanaCorrection(correctedText)
+
+        // ステップ3: 文脈依存の補正
+        correctedText = applyContextualCorrection(correctedText)
+
+        // ステップ4: Phase 2 - 形態素解析による未知語補正（v1.0.37で無効化）
+        if (ENABLE_PHASE2) {
+            correctedText = applyMorphologicalAnalysis(correctedText)
+        }
+
+        // ステップ5: Phase 3 - 信頼度ベース補正（OCR結果がある場合のみ）
+        if (ocrResult != null) {
+            correctedText = applyConfidenceBasedCorrection(correctedText, ocrResult)
+        }
+
+        // v1.0.39 ステップ6: Phase 1信頼度計算
+        val phase1Confidence = calculatePhase1Confidence(originalText, correctedText)
+        Log.d(TAG, "[v1.0.39] Phase 1 confidence: $phase1Confidence (patterns: ${appliedPatterns.size})")
+
+        // v1.0.39 ステップ7: バリデーション（誤補正防止）
+        if (ENABLE_VALIDATION && correctedText != originalText) {
+            val validationResult = correctionValidator.validate(originalText, correctedText)
+            if (!validationResult.valid) {
+                Log.w(TAG, "[v1.0.39] Validation failed: ${validationResult.reason}, reverting to original")
+                correctedText = originalText
+            } else {
+                Log.d(TAG, "[v1.0.39] Validation passed (confidence: ${validationResult.confidence})")
+            }
+        }
+
+        // v1.0.39 ステップ8: LLM補正（信頼度が低い場合のみ）
+        if (ENABLE_LLM_CORRECTION && phase1Confidence < MIN_CONFIDENCE_FOR_PHASE1) {
+            Log.d(TAG, "[v1.0.39] Phase 1 confidence low ($phase1Confidence), trying LLM correction")
+            val (llmCorrected, llmConfidence) = llmCorrector.correctWithLLM(
+                text = correctedText,
+                context = null,
+                phase1Confidence = phase1Confidence
+            )
+
+            if (llmConfidence > phase1Confidence) {
+                Log.d(TAG, "[v1.0.39] LLM correction accepted (confidence: $llmConfidence)")
+                correctedText = llmCorrected
+            } else {
+                Log.d(TAG, "[v1.0.39] LLM correction rejected (confidence: $llmConfidence)")
+            }
+        }
+
+        // 変更があった場合のみログ出力
+        if (correctedText != originalText) {
+            logCorrections(originalText, correctedText)
+        }
+
+        return correctedText
+    }
+
+    /**
+     * Phase 1: 一般化パターンの補正を適用
+     * v1.0.31で追加
+     * v1.0.39: パターン追跡機能追加
+     */
+    private fun applyGeneralizedPatterns(text: String): String {
+        var result = text
+        appliedPatterns.clear()  // v1.0.39: 追跡リストをクリア
+
+        generalizedPatterns.forEach { rule ->
+            val matches = rule.pattern.findAll(result).toList()
+            if (matches.isNotEmpty()) {
+                result = rule.pattern.replace(result, rule.correct)
+                val patternInfo = "generalized:${rule.description}(${matches.size}件)"
+                appliedPatterns.add(patternInfo)  // v1.0.39: パターンを記録
+            }
+        }
+
+        if (appliedPatterns.isNotEmpty()) {
+            Log.d(TAG, "[Phase1] Generalized patterns applied: ${appliedPatterns.joinToString(", ")}")
+        }
+
+        return result
+    }
+
+    /**
+     * Phase 2: 文脈ベース形態素解析補正を適用
+     * v1.0.34で再設計
+     * v1.0.37で無効化（ENABLE_PHASE2 = false）
+     *
+     * 無効化理由:
+     * - Kuromojiが誤認識テキストを既知単語の組み合わせとして処理
+     * - 例: "能要" → "能"(名詞) + "要"(動詞) として認識
+     * - 未知語として検出されないため、Phase 2のロジックが機能しない
+     * - 実測補正率: 0% (v1.0.35, v1.0.36)
+     * - Phase 1のみで十分な精度（57-85%）を達成可能
+     */
+    private fun applyMorphologicalAnalysis(text: String): String {
+        try {
+            val (correctedText, corrections) = morphAnalyzer.applyContextualCorrection(text)
+
+            if (corrections.isNotEmpty()) {
+                Log.d(TAG, "[Phase2] Contextual corrections applied: ${corrections.joinToString(", ")}")
+            }
+
+            return correctedText
+
+        } catch (e: Exception) {
+            Log.e(TAG, "[Phase2] Contextual analysis failed: ${e.message}", e)
+            return text
+        }
+    }
+
+    /**
+     * Phase 3: 信頼度ベース補正を適用
+     * v1.0.34で無効化（ML Kit Element構造により実現不可能）
+     */
+    private fun applyConfidenceBasedCorrection(text: String, ocrResult: Text): String {
+        // Phase 3は無効化
+        // 理由: ML Kit ElementsがsentenceレベルでグループNGされているため、
+        // 単語レベルの補正が不可能
+        return text
+    }
+
+    /**
+     * 経済用語の補正を適用
+     */
+    private fun applyEconomicTermsCorrection(text: String): String {
+        var result = text
+        economicTermsDict.forEach { (wrong, correct) ->
+            if (result.contains(wrong)) {
+                result = result.replace(wrong, correct)
+            }
+        }
+        return result
+    }
+
+    /**
+     * カタカナの補正を適用
+     */
+    private fun applyKatakanaCorrection(text: String): String {
+        var result = text
+        katakanaPatterns.forEach { (wrong, correct) ->
+            if (result.contains(wrong)) {
+                result = result.replace(wrong, correct)
+            }
+        }
+        return result
+    }
+
+    /**
+     * 文脈依存の補正を適用
+     * v1.0.39: パターン追跡機能追加
+     */
+    private fun applyContextualCorrection(text: String): String {
+        var result = text
+        var contextualCount = 0
+
+        contextualPatterns.forEach { (pattern, replacement) ->
+            val matches = pattern.findAll(result).toList()
+            if (matches.isNotEmpty()) {
+                result = pattern.replace(result, replacement)
+                contextualCount += matches.size
+            }
+        }
+
+        if (contextualCount > 0) {
+            appliedPatterns.add("contextual:文脈補正(${contextualCount}件)")  // v1.0.39: パターンを記録
+            Log.d(TAG, "[Phase1] Contextual patterns applied: $contextualCount corrections")
+        }
+
+        return result
+    }
+
+    /**
+     * v1.0.39: Phase 1の信頼度を計算
+     *
+     * 基準:
+     * - 変更なし: 0.3（OCRエラーがある可能性）
+     * - 多数のパターンマッチ: 信頼度高
+     * - 文脈パターンマッチ: 信頼度高
+     * - 辞書のみのマッチ: 信頼度中
+     *
+     * @param original 元のテキスト
+     * @param corrected 補正後のテキスト
+     * @return 信頼度スコア（0.0-1.0）
+     */
+    private fun calculatePhase1Confidence(original: String, corrected: String): Double {
+        if (original == corrected) {
+            return 0.3  // 補正なし = 低信頼度（OCRエラーがあるかもしれない）
+        }
+
+        var confidence = 0.5  // ベース信頼度
+
+        // 適用されたパターン数に応じて信頼度を上げる
+        confidence += minOf(appliedPatterns.size * 0.1, 0.3)
+
+        // 文脈パターンが適用された場合は信頼度を上げる
+        if (appliedPatterns.any { it.contains("contextual") }) {
+            confidence += 0.2
+        }
+
+        // 一般化パターンが多く適用された場合は信頼度を上げる
+        val generalizedCount = appliedPatterns.count { it.contains("generalized") }
+        if (generalizedCount >= 3) {
+            confidence += 0.1
+        }
+
+        return confidence.coerceIn(0.0, 1.0)
+    }
+
+    /**
+     * 補正ログを出力
+     */
+    private fun logCorrections(original: String, corrected: String) {
+        // 変更箇所を特定
+        val changes = findDifferences(original, corrected)
+
+        Log.d(TAG, """
+            |[TextCorrector] Applied corrections:
+            |  Changes: ${changes.size}
+            |  Original (${original.length} chars): ${original.take(50)}...
+            |  Corrected (${corrected.length} chars): ${corrected.take(50)}...
+            |  Details: ${changes.joinToString(", ")}
+        """.trimMargin())
+    }
+
+    /**
+     * テキストの差分を検出
+     */
+    private fun findDifferences(original: String, corrected: String): List<String> {
+        val differences = mutableListOf<String>()
+
+        // 経済用語の置換を検出
+        economicTermsDict.forEach { (wrong, correct) ->
+            if (original.contains(wrong) && corrected.contains(correct)) {
+                differences.add("$wrong→$correct")
+            }
+        }
+
+        // カタカナの置換を検出
+        katakanaPatterns.forEach { (wrong, correct) ->
+            if (original.contains(wrong) && corrected.contains(correct)) {
+                differences.add("$wrong→$correct")
+            }
+        }
+
+        return differences
+    }
+
+    /**
+     * 補正統計情報を取得
+     */
+    fun getCorrectionStats(originalText: String, correctedText: String): CorrectionStats {
+        val economicTermsCount = economicTermsDict.count { (wrong, _) ->
+            originalText.contains(wrong)
+        }
+
+        val katakanaCount = katakanaPatterns.count { (wrong, _) ->
+            originalText.contains(wrong)
+        }
+
+        val totalChanges = findDifferences(originalText, correctedText).size
+
+        return CorrectionStats(
+            economicTermsFixed = economicTermsCount,
+            katakanaFixed = katakanaCount,
+            totalCorrections = totalChanges,
+            originalLength = originalText.length,
+            correctedLength = correctedText.length
+        )
+    }
+
+    /**
+     * 補正統計情報データクラス
+     */
+    data class CorrectionStats(
+        val economicTermsFixed: Int,
+        val katakanaFixed: Int,
+        val totalCorrections: Int,
+        val originalLength: Int,
+        val correctedLength: Int
+    )
+}
