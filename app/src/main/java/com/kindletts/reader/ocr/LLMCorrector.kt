@@ -5,11 +5,15 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.util.Log
 import android.util.LruCache
-import com.google.ai.client.generativeai.GenerativeModel
-import com.google.ai.client.generativeai.type.generationConfig
 import com.kindletts.reader.BuildConfig
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import org.json.JSONArray
+import java.io.OutputStreamWriter
+import java.net.HttpURLConnection
+import java.net.URL
 
 /**
  * Phase LLM: LLMベースOCR補正（v1.0.45）
@@ -81,7 +85,7 @@ class LLMCorrector(private val context: Context) {
         /**
          * LLM補正を試行する条件
          */
-        private const val MIN_CONFIDENCE_FOR_PHASE1 = 0.95  // Phase 1の信頼度閾値（v1.0.45テスト用に0.7→0.95）
+        private const val MIN_CONFIDENCE_FOR_PHASE1 = 0.7  // Phase 1の信頼度閾値（v1.0.54: HTTP API検証完了、本番用しきい値に戻す）
         private const val MAX_TEXT_LENGTH_FOR_LLM = 500    // LLM処理の最大文字数
 
         /**
@@ -95,6 +99,13 @@ class LLMCorrector(private val context: Context) {
         private const val PREFS_NAME = "llm_correction_cache"
         private const val CACHE_KEY = "correction_cache_v1"
         private const val MAX_CACHE_AGE_DAYS = 30  // キャッシュの最大保持期間（日数）
+
+        /**
+         * v1.0.47: Gemini API設定
+         * SDK 0.9.0のデシリアライゼーションバグを回避するため、REST APIを直接使用
+         */
+        private const val GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
+        private const val MODEL_NAME = "gemini-2.5-flash"
 
         /**
          * v1.0.43: 適応的バッチサイズ設定
@@ -160,21 +171,6 @@ class LLMCorrector(private val context: Context) {
         val timestamp: Long = System.currentTimeMillis()
     )
 
-    // v1.0.40: Gemini 2.5 Flash モデル（クラウドAPI）
-    // v1.0.46: gemini-1.5-flash → gemini-2.5-flash（1.5モデルは2025年9月に廃止）
-    private val generativeModel: GenerativeModel by lazy {
-        GenerativeModel(
-            modelName = "gemini-2.5-flash",
-            apiKey = BuildConfig.GEMINI_API_KEY,
-            generationConfig = generationConfig {
-                temperature = 0.1f  // 低温度で決定論的な出力
-                topK = 1
-                topP = 0.1f
-                maxOutputTokens = 200  // 補正テキストは短いため
-            }
-        )
-    }
-
     /**
      * LLMベース補正のメインメソッド
      * v1.0.41: キャッシュ対応
@@ -227,6 +223,12 @@ class LLMCorrector(private val context: Context) {
 
             // LLM実行
             val correctedText = invokeLLM(prompt)
+
+            // LLMが空を返した場合、元のテキストを返す
+            if (correctedText.isEmpty()) {
+                Log.w(TAG, "[LLM] LLM returned empty, using original text")
+                return Pair(text, phase1Confidence)
+            }
 
             // 信頼度スコアの計算
             var confidence = calculateConfidence(text, correctedText)
@@ -651,7 +653,8 @@ JSON形式で出力:
     }
 
     /**
-     * v1.0.40: LLM実行（Gemini API統合）
+     * v1.0.47: LLM実行（Gemini REST API直接呼び出し）
+     * SDK 0.9.0のバグを回避するため、HTTPで直接APIを叩く
      */
     private fun invokeLLM(prompt: String): String {
         // ネットワーク接続チェック
@@ -660,7 +663,7 @@ JSON形式で出力:
             return ""
         }
 
-        // APIキーチェック（v1.0.45: デバッグ情報追加）
+        // APIキーチェック
         Log.d(TAG, "[LLM] API key length: ${BuildConfig.GEMINI_API_KEY.length}, starts with: ${BuildConfig.GEMINI_API_KEY.take(6)}...")
         if (BuildConfig.GEMINI_API_KEY == "YOUR_API_KEY_HERE" || BuildConfig.GEMINI_API_KEY.isEmpty()) {
             Log.w(TAG, "[LLM] API key not configured, skipping LLM correction")
@@ -669,15 +672,122 @@ JSON形式で出力:
         Log.d(TAG, "[LLM] API key validated successfully")
 
         return try {
-            // Gemini APIをコルーチン内で同期的に実行
+            // v1.0.48: HTTP呼び出しをIOディスパッチャで実行（NetworkOnMainThreadException回避）
             runBlocking {
-                val response = generativeModel.generateContent(prompt)
-                val responseText = response.text ?: ""
+                withContext(Dispatchers.IO) {
+                    val startTime = System.currentTimeMillis()
 
-                Log.d(TAG, "[LLM] Gemini API response received: ${responseText.take(100)}...")
+                    // REST APIエンドポイント
+                    val apiUrl = "$GEMINI_API_BASE/$MODEL_NAME:generateContent?key=${BuildConfig.GEMINI_API_KEY}"
+                    val url = URL(apiUrl)
 
-                // JSONレスポンスをパース
-                parseResponse(responseText)
+                    // リクエストボディ作成
+                    val requestBody = JSONObject().apply {
+                    put("contents", JSONArray().apply {
+                        put(JSONObject().apply {
+                            put("parts", JSONArray().apply {
+                                put(JSONObject().apply {
+                                    put("text", prompt)
+                                })
+                            })
+                        })
+                    })
+                    put("generationConfig", JSONObject().apply {
+                        put("temperature", 0.1)
+                        put("topK", 1)
+                        put("topP", 0.1)
+                        put("maxOutputTokens", 4000)  // v1.0.55: 2000→4000に増加（thoughtsが2000消費する場合あり）
+                    })
+                    put("safetySettings", JSONArray().apply {
+                        val categories = arrayOf("HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH",
+                                                 "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT")
+                        categories.forEach { category ->
+                            put(JSONObject().apply {
+                                put("category", category)
+                                put("threshold", "BLOCK_NONE")
+                            })
+                        }
+                    })
+                }
+
+                Log.d(TAG, "[LLM] Sending request to Gemini API...")
+
+                // HTTP POST実行
+                val connection = url.openConnection() as HttpURLConnection
+                connection.requestMethod = "POST"
+                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                connection.doOutput = true
+                connection.connectTimeout = 15000
+                connection.readTimeout = 15000
+
+                // リクエスト送信
+                OutputStreamWriter(connection.outputStream).use { writer ->
+                    writer.write(requestBody.toString())
+                    writer.flush()
+                }
+
+                val responseCode = connection.responseCode
+                Log.d(TAG, "[LLM] Response code: $responseCode")
+
+                    if (responseCode != HttpURLConnection.HTTP_OK) {
+                        val errorStream = connection.errorStream?.bufferedReader()?.readText()
+                        Log.e(TAG, "[LLM] API error: $errorStream")
+                        return@withContext ""
+                    }
+
+                // レスポンス読み取り
+                val responseText = connection.inputStream.bufferedReader().readText()
+                val elapsed = System.currentTimeMillis() - startTime
+                Log.d(TAG, "[LLM] Response received in ${elapsed}ms")
+                Log.d(TAG, "[LLM] Raw response (first 500 chars): ${responseText.take(500)}")
+
+                // JSONパース
+                val responseJson = JSONObject(responseText)
+
+                // デバッグ: レスポンス詳細をログ
+                if (responseJson.has("candidates")) {
+                    val candidates = responseJson.getJSONArray("candidates")
+                    Log.d(TAG, "[LLM] Response candidates: ${candidates.length()}")
+
+                    if (candidates.length() > 0) {
+                        val firstCandidate = candidates.getJSONObject(0)
+                        Log.d(TAG, "[LLM] First candidate JSON: ${firstCandidate.toString().take(500)}")
+                        if (firstCandidate.has("finishReason")) {
+                            Log.d(TAG, "[LLM] Finish reason: ${firstCandidate.getString("finishReason")}")
+                        }
+
+                        if (firstCandidate.has("content")) {
+                            val content = firstCandidate.getJSONObject("content")
+                            if (content.has("parts")) {
+                                val parts = content.getJSONArray("parts")
+                                Log.d(TAG, "[LLM] Response parts count: ${parts.length()}")
+                                    if (parts.length() > 0) {
+                                        val firstPart = parts.getJSONObject(0)
+                                        Log.d(TAG, "[LLM] First part keys: ${firstPart.keys().asSequence().toList()}")
+                                        if (firstPart.has("text")) {
+                                            val text = firstPart.getString("text")
+                                            Log.d(TAG, "[LLM] Response text length: ${text.length}")
+                                            Log.d(TAG, "[LLM] Gemini API response received: ${text.take(100)}...")
+                                            return@withContext parseResponse(text)
+                                        } else {
+                                            Log.w(TAG, "[LLM] No 'text' field in first part")
+                                        }
+                                    }
+                            }
+                        } else {
+                            Log.w(TAG, "[LLM] No 'content' field in candidate")
+                        }
+                    }
+                }
+
+                if (responseJson.has("promptFeedback")) {
+                    val feedback = responseJson.getJSONObject("promptFeedback")
+                    Log.w(TAG, "[LLM] Prompt blocked! Feedback: $feedback")
+                }
+
+                    Log.w(TAG, "[LLM] Response text is empty or malformed")
+                    ""
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "[LLM] Gemini API call failed: ${e.message}", e)
@@ -686,8 +796,7 @@ JSON形式で出力:
     }
 
     /**
-     * v1.0.41: バッチLLM実行（Gemini API統合）
-     *
+     * v1.0.47: バッチLLM実行（Gemini REST API直接呼び出し）
      * 複数テキストを一度に処理
      */
     private fun invokeBatchLLM(prompt: String, expectedSize: Int): List<String> {
@@ -704,15 +813,92 @@ JSON形式で出力:
         }
 
         return try {
-            // Gemini APIをコルーチン内で同期的に実行
+            // v1.0.48: HTTP呼び出しをIOディスパッチャで実行（NetworkOnMainThreadException回避）
             runBlocking {
-                val response = generativeModel.generateContent(prompt)
-                val responseText = response.text ?: ""
+                withContext(Dispatchers.IO) {
+                    val startTime = System.currentTimeMillis()
 
-                Log.d(TAG, "[LLM] Batch Gemini API response received: ${responseText.take(100)}...")
+                    // REST APIエンドポイント
+                    val apiUrl = "$GEMINI_API_BASE/$MODEL_NAME:generateContent?key=${BuildConfig.GEMINI_API_KEY}"
+                    val url = URL(apiUrl)
 
-                // JSONレスポンスをパース
-                parseBatchResponse(responseText, expectedSize)
+                    // リクエストボディ作成
+                    val requestBody = JSONObject().apply {
+                    put("contents", JSONArray().apply {
+                        put(JSONObject().apply {
+                            put("parts", JSONArray().apply {
+                                put(JSONObject().apply {
+                                    put("text", prompt)
+                                })
+                            })
+                        })
+                    })
+                    put("generationConfig", JSONObject().apply {
+                        put("temperature", 0.1)
+                        put("topK", 1)
+                        put("topP", 0.1)
+                        put("maxOutputTokens", 4000)  // v1.0.55: thoughtsTokenCount対策で4000に増加
+                    })
+                    put("safetySettings", JSONArray().apply {
+                        val categories = arrayOf("HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH",
+                                                 "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT")
+                        categories.forEach { category ->
+                            put(JSONObject().apply {
+                                put("category", category)
+                                put("threshold", "BLOCK_NONE")
+                            })
+                        }
+                    })
+                }
+
+                // HTTP POST実行
+                val connection = url.openConnection() as HttpURLConnection
+                connection.requestMethod = "POST"
+                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                connection.doOutput = true
+                connection.connectTimeout = 15000
+                connection.readTimeout = 15000
+
+                OutputStreamWriter(connection.outputStream).use { writer ->
+                    writer.write(requestBody.toString())
+                    writer.flush()
+                }
+
+                    val responseCode = connection.responseCode
+                    if (responseCode != HttpURLConnection.HTTP_OK) {
+                        val errorStream = connection.errorStream?.bufferedReader()?.readText()
+                        Log.e(TAG, "[LLM] Batch API error: $errorStream")
+                        return@withContext List(expectedSize) { "" }
+                    }
+
+                    // レスポンス読み取り
+                val responseText = connection.inputStream.bufferedReader().readText()
+                val elapsed = System.currentTimeMillis() - startTime
+                Log.d(TAG, "[LLM] Batch response received in ${elapsed}ms")
+
+                // JSONパース
+                val responseJson = JSONObject(responseText)
+                if (responseJson.has("candidates")) {
+                    val candidates = responseJson.getJSONArray("candidates")
+                    if (candidates.length() > 0) {
+                        val firstCandidate = candidates.getJSONObject(0)
+                        if (firstCandidate.has("content")) {
+                            val content = firstCandidate.getJSONObject("content")
+                            if (content.has("parts")) {
+                                val parts = content.getJSONArray("parts")
+                                    if (parts.length() > 0) {
+                                        val text = parts.getJSONObject(0).getString("text")
+                                        Log.d(TAG, "[LLM] Batch Gemini API response received: ${text.take(100)}...")
+                                        return@withContext parseBatchResponse(text, expectedSize)
+                                    }
+                            }
+                        }
+                    }
+                }
+
+                    Log.w(TAG, "[LLM] Batch response text is empty or malformed")
+                    List(expectedSize) { "" }
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "[LLM] Batch Gemini API call failed: ${e.message}", e)
@@ -803,8 +989,8 @@ JSON形式で出力:
             val responseText = invokeLLM(prompt)
 
             if (responseText.isEmpty()) {
-                Log.w(TAG, "[v1.0.45] Refinement LLM returned empty, using original correction")
-                return Pair(correctedText, initialConfidence)
+                Log.w(TAG, "[v1.0.45] Refinement LLM returned empty, using original text")
+                return Pair(originalText, initialConfidence)
             }
 
             // レスポンスをパース（confidence付き）
