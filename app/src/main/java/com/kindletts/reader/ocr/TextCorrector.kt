@@ -39,7 +39,7 @@ class TextCorrector(private val context: android.content.Context) {
          * v1.0.39: LLM補正を試行する信頼度閾値
          * Phase 1の信頼度がこれ未満の場合、LLM補正を試行
          */
-        private const val MIN_CONFIDENCE_FOR_PHASE1 = 0.7
+        private const val MIN_CONFIDENCE_FOR_PHASE1 = 0.7  // v1.0.54: HTTP API検証完了、本番用しきい値に戻す
 
         // Phase 2: 形態素解析器（遅延初期化）
         private val morphAnalyzer: MorphologicalAnalyzer by lazy {

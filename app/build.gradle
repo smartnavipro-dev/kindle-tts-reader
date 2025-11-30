@@ -11,8 +11,8 @@ android {
         applicationId "com.kindletts.reader"
         minSdk 21
         targetSdk 34
-        versionCode 49
-        versionName "1.0.46"
+        versionCode 58
+        versionName "1.0.55"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
