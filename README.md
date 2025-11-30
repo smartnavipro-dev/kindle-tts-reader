@@ -24,10 +24,12 @@ Kindle TTS Reader transforms your reading experience by automatically reading Ki
 ### **🌟 Key Features**
 
 - **🔍 OCR Text Recognition** - Extract text from Kindle app using Google ML Kit
+- **🤖 AI-Powered Text Correction** - Gemini 2.5 Flash LLM for high-accuracy OCR correction
 - **🔊 Text-to-Speech** - Natural voice synthesis in Japanese and English
 - **📱 Screen Capture** - Real-time screen analysis using MediaProjection API
 - **👆 Auto Page Turn** - Automatic page navigation using AccessibilityService
 - **💫 Overlay UI** - Floating controls over other apps
+- **⚡ Smart Caching** - LRU cache for improved performance and reduced API calls
 
 ---
 
@@ -72,6 +74,55 @@ cd kindle-tts-reader
 
 ---
 
+## 🔑 **Gemini API Configuration (Optional)**
+
+### **What is Gemini API?**
+Kindle TTS Reader uses Google's Gemini 2.5 Flash AI model to improve OCR accuracy. When ML Kit's confidence is below 0.7, the app sends the text (not images) to Gemini for correction.
+
+### **Getting Your API Key**
+
+1. Visit [Google AI Studio](https://aistudio.google.com/app/apikey)
+2. Click "Create API Key"
+3. Copy your API key
+
+### **Setting the API Key**
+
+**For Pre-built APK:**
+The APK is already built with a default API key. It will work out-of-the-box.
+
+**For Building from Source:**
+```bash
+# Create local.properties in project root
+echo "GEMINI_API_KEY=your_api_key_here" >> local.properties
+
+# Build the release APK
+./gradlew assembleRelease -PGEMINI_API_KEY="your_api_key_here"
+```
+
+### **💰 Cost Information**
+
+**Pricing (as of 2025):**
+- Input: $0.30 per million tokens
+- Output: $2.50 per million tokens
+- **Typical cost: ~$0.0003 per correction** (0.03¢)
+
+**Free Tier:**
+- 500 requests per day
+- 250,000 tokens per minute
+- Perfect for personal use
+
+**Monthly Estimate:**
+- 3,000 corrections/month ≈ **$0.90** (90¢)
+- Most corrections are cached, reducing API calls
+
+**Important Notes:**
+- You're only charged for actual tokens used, not the `maxOutputTokens` limit (4000)
+- LLM correction only happens when OCR confidence < 0.7
+- Cached results are reused, minimizing API calls
+- Monitor usage at [Google AI Studio](https://aistudio.google.com)
+
+---
+
 ## 🛠️ **Setup & Usage**
 
 ### **Step 1: Grant Permissions**
@@ -100,7 +151,9 @@ cd kindle-tts-reader
 ### **Technology Stack**
 - **Language**: Kotlin 100%
 - **UI Framework**: Material Design 3
-- **OCR Engine**: Google ML Kit Text Recognition
+- **OCR Engine**: Google ML Kit Text Recognition (Japanese)
+- **AI Model**: Google Gemini 2.5 Flash (LLM-based text correction)
+- **Text Processing**: Kuromoji (morphological analysis)
 - **TTS Engine**: Android TextToSpeech API
 - **Screen Capture**: MediaProjection API
 - **Gestures**: AccessibilityService API
@@ -108,14 +161,34 @@ cd kindle-tts-reader
 ### **Architecture Diagram**
 ```
 ┌─────────────┐    ┌──────────────┐    ┌─────────────┐
-│   Kindle    │───▶│    Screen    │───▶│    OCR      │
-│    App      │    │   Capture    │    │ Processing  │
+│   Kindle    │───▶│    Screen    │───▶│   ML Kit    │
+│    App      │    │   Capture    │    │     OCR     │
 └─────────────┘    └──────────────┘    └─────────────┘
-                            │                   │
-                            ▼                   ▼
+                                               │
+                                               ▼
+                            ┌──────────────────────────────┐
+                            │    Confidence Check (0.7)    │
+                            └──────────────────────────────┘
+                                    │              │
+                          HighConf  │              │  LowConf
+                                    ▼              ▼
+                            ┌─────────────┐  ┌──────────────┐
+                            │   Phase 1   │  │  Gemini 2.5  │
+                            │   Pattern   │  │  Flash API   │
+                            │ Correction  │  │  (LLM Corr.) │
+                            └─────────────┘  └──────────────┘
+                                    │              │
+                                    └──────┬───────┘
+                                           ▼
+                            ┌──────────────────────────────┐
+                            │      Corrected Text          │
+                            │      + LRU Cache             │
+                            └──────────────────────────────┘
+                                           │
+                                           ▼
 ┌─────────────┐    ┌──────────────┐    ┌─────────────┐
-│    Auto     │◀───│     TTS      │◀───│   Text      │
-│ Page Turn   │    │   Engine     │    │ Extraction  │
+│    Auto     │◀───│   Android    │◀───│   Text      │
+│ Page Turn   │    │     TTS      │    │  Processing │
 └─────────────┘    └──────────────┘    └─────────────┘
 ```
 
@@ -142,9 +215,13 @@ cd kindle-tts-reader
 
 ### **Privacy First**
 - ✅ **No data collection** - Zero personal information stored
-- ✅ **Offline processing** - All OCR and TTS work locally
+- ✅ **Local OCR processing** - ML Kit works completely offline
 - ✅ **Temporary screen data** - Images processed in memory only
-- ✅ **No network requests** - Completely offline operation
+- ⚠️ **Optional AI Enhancement** - Gemini API used for text correction (requires API key)
+  - Only OCR text is sent, not images
+  - Only sent when OCR confidence is below threshold (0.7)
+  - Cached results reduce API calls
+  - You control the API key and can disable LLM correction
 
 ### **Security Features**
 - ✅ **Minimal permissions** - Only essential permissions requested
@@ -235,11 +312,38 @@ Currently supports Japanese and English OCR/TTS. Additional language support is 
 Optimized for minimal battery usage. Typical usage consumes about 10-15% battery per hour of reading.
 </details>
 
+<details>
+<summary><strong>Do I need a Gemini API key to use the app?</strong></summary>
+
+The pre-built APK comes with a default API key and works immediately. However, if you're building from source or want to use your own quota, you'll need to get a free API key from Google AI Studio.
+</details>
+
+<details>
+<summary><strong>How much does Gemini API cost?</strong></summary>
+
+The free tier provides 500 requests/day, which is more than enough for personal reading. Paid usage costs about $0.0003 per correction (~0.03¢). For typical usage of 3,000 corrections/month, expect around $0.90 (90¢) per month. Most corrections are cached, so actual API calls are minimized.
+</details>
+
+<details>
+<summary><strong>Is my reading data sent to Google?</strong></summary>
+
+Only the OCR-extracted text (not images or personal data) is sent to Gemini API when OCR confidence is below 0.7. You can monitor all API calls in the app logs. No reading history or personal information is collected or stored.
+</details>
+
+<details>
+<summary><strong>Can I use the app without the Gemini API?</strong></summary>
+
+Not currently. The app requires Gemini API for text correction to achieve high accuracy. Future versions may add an offline-only mode with reduced accuracy.
+</details>
+
 ---
 
 ## 🙏 **Acknowledgments**
 
 - **Google ML Kit** - Exceptional OCR capabilities
+- **Google Gemini 2.5 Flash** - Advanced AI-powered text correction
+- **Google DeepMind** - Revolutionary language models
+- **Atilika Kuromoji** - Japanese morphological analysis
 - **Android Accessibility APIs** - Enabling automated interactions
 - **Material Design** - Beautiful UI components
 - **Kotlin Community** - Amazing language and ecosystem
