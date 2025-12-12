@@ -51,6 +51,32 @@ class TextCorrector(private val context: android.content.Context) {
             ConfidenceAnalyzer()
         }
 
+        // Phase 3: UniDic助詞脱落検出器（遅延初期化） - v1.0.64
+        private val particleDetector: ParticleMissingDetector by lazy {
+            ParticleMissingDetector()
+        }
+
+        // Phase 3: UniDic送り仮名補正器（遅延初期化） - v1.0.65
+        private val okuriganaCorrector: OkuriganaCorrector by lazy {
+            OkuriganaCorrector()
+        }
+
+        // Phase 3: 促音・長音補正器（遅延初期化） - v1.0.66
+        private val sokuonChoonCorrector: SokuonChoonCorrector by lazy {
+            SokuonChoonCorrector()
+        }
+
+        // Phase 3: 漢字字形類似誤認識補正器（遅延初期化） - v1.0.68
+        private val kanjiShapeCorrector: KanjiShapeCorrector by lazy {
+            KanjiShapeCorrector()
+        }
+
+        // Phase 3制御フラグ
+        private const val ENABLE_PARTICLE_DETECTION = true       // v1.0.64: 助詞脱落検出
+        private const val ENABLE_OKURIGANA_CORRECTION = false    // v1.0.69: 一時的に無効化（プロセスクラッシュ問題）
+        private const val ENABLE_SOKUON_CHOON_CORRECTION = false // v1.0.69: 一時的に無効化（OOM問題）
+        private const val ENABLE_KANJI_SHAPE_CORRECTION = false  // v1.0.70: 一時的に無効化（OOM問題）
+
         /**
          * Phase 1: パターンベース補正ルール (v1.0.31, v1.0.38大幅拡張, v1.0.39順序最適化)
          * 類似漢字グループを使った一般化パターン
@@ -1138,6 +1164,87 @@ class TextCorrector(private val context: android.content.Context) {
     private val appliedPatterns = mutableListOf<String>()
 
     /**
+     * v1.0.75: Phase 3検出結果からLLM用ヒントを生成
+     * v1.0.76: 送り仮名、促音・長音、漢字字形の検出結果も含める
+     * v1.0.77: ヒント表現を簡潔化（トークン削減）
+     */
+    private fun buildPhase3Hints(
+        particleResult: ParticleMissingDetector.ParticleCorrectionResult?,
+        okuriganaResult: OkuriganaCorrector.OkuriganaResult?,
+        choonResult: SokuonChoonCorrector.ChoonResult?,
+        kanjiResult: KanjiShapeCorrector.KanjiShapeResult?
+    ): String? {
+        val hints = mutableListOf<String>()
+
+        // 助詞脱落ヒント（簡潔化: "A[助詞]B" 形式）
+        // v1.0.81: 信頼度閾値を0.6→0.5に引き下げ（助詞ヒント生成率向上）
+        if (particleResult != null && particleResult.suggestions.isNotEmpty()) {
+            particleResult.suggestions.take(3).forEach { suggestion ->
+                if (suggestion.confidence >= 0.5) {
+                    hints.add("${suggestion.afterWord}[${suggestion.suggestedParticle}]${suggestion.beforeWord}")
+                }
+            }
+        }
+
+        // 送り仮名補正ヒント（簡潔化: "A→B" 形式）
+        // v1.0.81: 信頼度閾値を0.6→0.5に引き下げ
+        if (okuriganaResult != null && okuriganaResult.suggestions.isNotEmpty()) {
+            okuriganaResult.suggestions.take(2).forEach { suggestion ->
+                if (suggestion.confidence >= 0.5) {
+                    hints.add("${suggestion.verbPattern}→${suggestion.verbStem}${suggestion.correctedForm}")
+                }
+            }
+        }
+
+        // 促音・長音補正ヒント（簡潔化: "A→B" 形式）
+        // v1.0.81: 信頼度閾値を0.6→0.5に引き下げ
+        if (choonResult != null && choonResult.suggestions.isNotEmpty()) {
+            choonResult.suggestions.take(2).forEach { suggestion ->
+                if (suggestion.confidence >= 0.5) {
+                    hints.add("${suggestion.originalForm}→${suggestion.correctedForm}")
+                }
+            }
+        }
+
+        // 漢字字形補正ヒント（簡潔化: "A→B" 形式）
+        // v1.0.81: 信頼度閾値を0.6→0.5に引き下げ
+        if (kanjiResult != null && kanjiResult.suggestions.isNotEmpty()) {
+            kanjiResult.suggestions.take(2).forEach { suggestion ->
+                if (suggestion.confidence >= 0.5) {
+                    hints.add("${suggestion.misrecognizedKanji}→${suggestion.correctKanji}")
+                }
+            }
+        }
+
+        // v1.0.78: Phase 3ヒント生成統計ログ
+        // v1.0.81: 信頼度閾値を0.6→0.5に変更
+        if (hints.isNotEmpty()) {
+            var particleCount = 0
+            var okuriganaCount = 0
+            var choonCount = 0
+            var kanjiCount = 0
+
+            if (particleResult != null && particleResult.suggestions.isNotEmpty()) {
+                particleCount = particleResult.suggestions.take(3).count { it.confidence >= 0.5 }
+            }
+            if (okuriganaResult != null && okuriganaResult.suggestions.isNotEmpty()) {
+                okuriganaCount = okuriganaResult.suggestions.take(2).count { it.confidence >= 0.5 }
+            }
+            if (choonResult != null && choonResult.suggestions.isNotEmpty()) {
+                choonCount = choonResult.suggestions.take(2).count { it.confidence >= 0.5 }
+            }
+            if (kanjiResult != null && kanjiResult.suggestions.isNotEmpty()) {
+                kanjiCount = kanjiResult.suggestions.take(2).count { it.confidence >= 0.5 }
+            }
+
+            Log.d(TAG, "[v1.0.78 Phase3Hints] Generated ${hints.size} hints: particle=$particleCount, okurigana=$okuriganaCount, choon=$choonCount, kanji=$kanjiCount")
+            return hints.joinToString(", ")
+        } else {
+            return null
+        }
+    }
+
+    /**
      * メイン補正メソッド（文字列のみ）
      * OCR認識テキストを補正して返す
      * v1.0.31: Phase 1一般化パターンを優先適用
@@ -1207,6 +1314,153 @@ class TextCorrector(private val context: android.content.Context) {
             correctedText = applyConfidenceBasedCorrection(correctedText, ocrResult)
         }
 
+        // v1.0.64 ステップ5.5: Phase 3 UniDic - 助詞脱落検出と補完
+        // v1.0.75: 検出結果を保存してLLMに渡す
+        var phase3DetectionResult: ParticleMissingDetector.ParticleCorrectionResult? = null
+        if (ENABLE_PARTICLE_DETECTION) {
+            try {
+                val detectionResult = particleDetector.detectAndSuggest(correctedText)
+                if (detectionResult.suggestions.isNotEmpty()) {
+                    Log.d(TAG, "[v1.0.64 Phase3 UniDic] Detected ${detectionResult.suggestions.size} particle missing patterns")
+
+                    detectionResult.suggestions.forEach { suggestion ->
+                        Log.d(TAG, "[v1.0.64 Phase3] ${suggestion.afterWord}【${suggestion.suggestedParticle}】${suggestion.beforeWord} (conf=${String.format("%.2f", suggestion.confidence)}, ${suggestion.reason})")
+                    }
+
+                    // v1.0.75: 検出結果を保存
+                    phase3DetectionResult = detectionResult
+
+                    val particleCorrected = particleDetector.applyCorrections(detectionResult, minConfidence = 0.7)
+                    if (particleCorrected != correctedText) {
+                        Log.d(TAG, "[v1.0.64 Phase3] Particle corrections applied")
+                        correctedText = particleCorrected
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "[v1.0.64 Phase3] Particle detection failed: ${e.message}", e)
+            }
+        }
+
+        // v1.0.76 ステップ5.5.5: Phase 3 検出のみモード（LLMヒント用）
+        // 送り仮名、促音・長音、漢字字形の検出を実行（補正は適用しない）
+        var phase3OkuriganaResult: OkuriganaCorrector.OkuriganaResult? = null
+        var phase3ChoonResult: SokuonChoonCorrector.ChoonResult? = null
+        var phase3KanjiResult: KanjiShapeCorrector.KanjiShapeResult? = null
+
+        // 送り仮名検出（フラグfalseでも検出だけは実行）
+        if (!ENABLE_OKURIGANA_CORRECTION) {
+            try {
+                val okuriganaResult = okuriganaCorrector.detectAndCorrect(correctedText)
+                if (okuriganaResult.suggestions.isNotEmpty()) {
+                    Log.d(TAG, "[v1.0.76 Phase3 Okurigana Detection] Found ${okuriganaResult.suggestions.size} patterns (detection only)")
+                    okuriganaResult.suggestions.take(3).forEach { suggestion ->
+                        Log.d(TAG, "[v1.0.76 Okurigana] ${suggestion.verbPattern} → ${suggestion.verbStem}${suggestion.correctedForm} (conf=${String.format("%.2f", suggestion.confidence)})")
+                    }
+                    phase3OkuriganaResult = okuriganaResult
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "[v1.0.76 Okurigana Detection] Failed: ${e.message}", e)
+            }
+        }
+
+        // 促音・長音検出（フラグfalseでも検出だけは実行）
+        if (!ENABLE_SOKUON_CHOON_CORRECTION) {
+            try {
+                val choonResult = sokuonChoonCorrector.detectAndCorrect(correctedText)
+                if (choonResult.suggestions.isNotEmpty()) {
+                    Log.d(TAG, "[v1.0.76 Phase3 SokuonChoon Detection] Found ${choonResult.suggestions.size} patterns (detection only)")
+                    choonResult.suggestions.take(3).forEach { suggestion ->
+                        Log.d(TAG, "[v1.0.76 SokuonChoon] '${suggestion.originalForm}' → '${suggestion.correctedForm}' (conf=${String.format("%.2f", suggestion.confidence)})")
+                    }
+                    phase3ChoonResult = choonResult
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "[v1.0.76 SokuonChoon Detection] Failed: ${e.message}", e)
+            }
+        }
+
+        // 漢字字形検出（フラグfalseでも検出だけは実行）
+        if (!ENABLE_KANJI_SHAPE_CORRECTION) {
+            try {
+                val kanjiResult = kanjiShapeCorrector.detectAndCorrect(correctedText)
+                if (kanjiResult.suggestions.isNotEmpty()) {
+                    Log.d(TAG, "[v1.0.76 Phase3 KanjiShape Detection] Found ${kanjiResult.suggestions.size} patterns (detection only)")
+                    kanjiResult.suggestions.take(3).forEach { suggestion ->
+                        Log.d(TAG, "[v1.0.76 KanjiShape] '${suggestion.originalForm}' → '${suggestion.correctedForm}' (${suggestion.misrecognizedKanji}→${suggestion.correctKanji}, conf=${String.format("%.2f", suggestion.confidence)})")
+                    }
+                    phase3KanjiResult = kanjiResult
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "[v1.0.76 KanjiShape Detection] Failed: ${e.message}", e)
+            }
+        }
+
+        // v1.0.65 ステップ5.6: Phase 3 UniDic - 送り仮名補正
+        if (ENABLE_OKURIGANA_CORRECTION) {
+            try {
+                val okuriganaResult = okuriganaCorrector.detectAndCorrect(correctedText)
+                if (okuriganaResult.suggestions.isNotEmpty()) {
+                    Log.d(TAG, "[v1.0.65 Okurigana] Found ${okuriganaResult.suggestions.size} okurigana patterns")
+
+                    okuriganaResult.suggestions.forEach { suggestion ->
+                        Log.d(TAG, "[v1.0.65 Okurigana] ${suggestion.verbPattern} → ${suggestion.verbStem}${suggestion.correctedForm} (conf=${String.format("%.2f", suggestion.confidence)}, ${suggestion.reason})")
+                    }
+
+                    val okCorrected = okuriganaCorrector.applyCorrections(okuriganaResult, minConfidence = 0.6)
+                    if (okCorrected != correctedText) {
+                        Log.d(TAG, "[v1.0.65 Okurigana] Corrections applied")
+                        correctedText = okCorrected
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "[v1.0.65 Okurigana] Failed: ${e.message}", e)
+            }
+        }
+
+        // v1.0.66 ステップ5.7: Phase 3 - 促音・長音補正
+        if (ENABLE_SOKUON_CHOON_CORRECTION) {
+            try {
+                val choonResult = sokuonChoonCorrector.detectAndCorrect(correctedText)
+                if (choonResult.suggestions.isNotEmpty()) {
+                    Log.d(TAG, "[v1.0.67 SokuonChoon] Found ${choonResult.suggestions.size} choon patterns")
+
+                    choonResult.suggestions.forEach { suggestion ->
+                        Log.d(TAG, "[v1.0.67 SokuonChoon] '${suggestion.originalForm}' → '${suggestion.correctedForm}' (conf=${String.format("%.2f", suggestion.confidence)}, ${suggestion.reason})")
+                    }
+
+                    val scCorrected = sokuonChoonCorrector.applyCorrections(choonResult, minConfidence = 0.65)
+                    if (scCorrected != correctedText) {
+                        Log.d(TAG, "[v1.0.67 SokuonChoon] Corrections applied")
+                        correctedText = scCorrected
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "[v1.0.67 SokuonChoon] Failed: ${e.message}", e)
+            }
+        }
+
+        // v1.0.68 ステップ5.8: Phase 3 - 漢字字形類似誤認識補正
+        if (ENABLE_KANJI_SHAPE_CORRECTION) {
+            try {
+                val kanjiResult = kanjiShapeCorrector.detectAndCorrect(correctedText)
+                if (kanjiResult.suggestions.isNotEmpty()) {
+                    Log.d(TAG, "[v1.0.68 KanjiShape] Found ${kanjiResult.suggestions.size} kanji shape patterns")
+
+                    kanjiResult.suggestions.forEach { suggestion ->
+                        Log.d(TAG, "[v1.0.68 KanjiShape] '${suggestion.originalForm}' → '${suggestion.correctedForm}' (${suggestion.misrecognizedKanji}→${suggestion.correctKanji}) conf=${String.format("%.2f", suggestion.confidence)}, ${suggestion.reason})")
+                    }
+
+                    val ksCorrected = kanjiShapeCorrector.applyCorrections(kanjiResult, minConfidence = 0.60)
+                    if (ksCorrected != correctedText) {
+                        Log.d(TAG, "[v1.0.68 KanjiShape] Corrections applied")
+                        correctedText = ksCorrected
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "[v1.0.68 KanjiShape] Failed: ${e.message}", e)
+            }
+        }
+
         // v1.0.39 ステップ6: Phase 1信頼度計算
         val phase1Confidence = calculatePhase1Confidence(originalText, correctedText)
         Log.d(TAG, "[v1.0.39] Phase 1 confidence: $phase1Confidence (patterns: ${appliedPatterns.size})")
@@ -1223,12 +1477,25 @@ class TextCorrector(private val context: android.content.Context) {
         }
 
         // v1.0.39 ステップ8: LLM補正（信頼度が低い場合のみ）
+        // v1.0.75: Phase 3検出結果をLLMに渡す
+        // v1.0.76: すべてのPhase 3検出結果をLLMに渡す
         if (ENABLE_LLM_CORRECTION && phase1Confidence < MIN_CONFIDENCE_FOR_PHASE1) {
             Log.d(TAG, "[v1.0.39] Phase 1 confidence low ($phase1Confidence), trying LLM correction")
+
+            // v1.0.75: Phase 3ヒントを生成
+            // v1.0.76: すべてのPhase 3検出結果を含める
+            val phase3Hints = buildPhase3Hints(
+                phase3DetectionResult,
+                phase3OkuriganaResult,
+                phase3ChoonResult,
+                phase3KanjiResult
+            )
+
             val (llmCorrected, llmConfidence) = llmCorrector.correctWithLLM(
                 text = correctedText,
                 context = null,
-                phase1Confidence = phase1Confidence
+                phase1Confidence = phase1Confidence,
+                phase3Hints = phase3Hints
             )
 
             if (llmConfidence > phase1Confidence) {

@@ -16,6 +16,11 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
+ * v1.0.73: リトライ可能な例外クラス
+ */
+private class RetryableException(val retryDelayMs: Long, val errorResponse: String?) : Exception("Retryable API error, delay: ${retryDelayMs}ms")
+
+/**
  * Phase LLM: LLMベースOCR補正（v1.0.45）
  *
  * ハイブリッドアプローチ:
@@ -66,6 +71,12 @@ import java.net.URL
  * - 2段階補正で認識率向上（95-98% → 99-99.5%）
  * - 再処理統計追跡（refinement率、改善度）
  *
+ * v1.0.73: 自動リトライ機能
+ * - 429エラー（quota超過）の自動リトライ
+ * - RetryInfoからリトライ待機時間を抽出
+ * - 最大3回までのリトライ
+ * - リトライ統計追跡
+ *
  * 期待される補正率: 99-99.5%（Phase 1: 90% + LLM: 9-9.5%）
  * 月間コスト: ~$0.04-0.05（反復補正により+20%）
  * 平均レイテンシ: ~120ms（再処理時+500ms for 20%）
@@ -105,7 +116,15 @@ class LLMCorrector(private val context: Context) {
          * SDK 0.9.0のデシリアライゼーションバグを回避するため、REST APIを直接使用
          */
         private const val GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-        private const val MODEL_NAME = "gemini-2.5-flash"
+        private const val MODEL_NAME = "gemini-2.5-flash"  // v1.0.80: gemini-2.5-flash (最新安定版、1500 req/day) - 404エラー最終修正
+
+        /**
+         * v1.0.73: リトライ設定
+         */
+        private const val ENABLE_RETRY = true               // リトライ機能の有効化
+        private const val MAX_RETRY_ATTEMPTS = 3            // 最大リトライ回数
+        private const val INITIAL_RETRY_DELAY_MS = 1000L    // 初回リトライ待機時間（1秒）
+        private const val MAX_RETRY_DELAY_MS = 60000L       // 最大リトライ待機時間（60秒）
 
         /**
          * v1.0.43: 適応的バッチサイズ設定
@@ -128,10 +147,11 @@ class LLMCorrector(private val context: Context) {
 
         /**
          * v1.0.45: 反復補正設定
+         * v1.0.56: 精度向上のため閾値を0.8→0.95に引き上げ（約20%のケースで再補正）
          */
-        private const val REFINEMENT_CONFIDENCE_THRESHOLD = 0.8  // 再補正の閾値（これ未満で再処理）
+        private const val REFINEMENT_CONFIDENCE_THRESHOLD = 0.95 // 再補正の閾値（これ未満で再処理）
         private const val ENABLE_ITERATIVE_REFINEMENT = true     // 反復補正を有効化
-        private const val MAX_REFINEMENT_ITERATIONS = 1          // 最大反復回数（現在は1回のみ）
+        private const val MAX_REFINEMENT_ITERATIONS = 1          // 最大反復回数（1回=合計2段階補正）
     }
 
     // v1.0.41: LRUキャッシュ（補正結果をキャッシュ）
@@ -153,6 +173,15 @@ class LLMCorrector(private val context: Context) {
 
     // v1.0.45: 反復補正統計
     private var refinementCount = 0          // 再補正を実行した回数
+
+    // v1.0.73: リトライ統計
+    private var retryCount = 0               // リトライ実行回数
+    private var totalRetryWaitTime = 0L      // 総リトライ待機時間（ms）
+
+    // v1.0.74: キャッシュ統計拡充
+    private var cacheEvictions = 0           // キャッシュeviction回数
+    private var cacheWriteCount = 0          // キャッシュ書き込み回数
+    private var totalCacheEntryAge = 0L      // キャッシュエントリの総年齢（ms）
     private var refinementImprovedCount = 0  // 再補正で改善した回数
     private var totalRefinementLatency = 0L  // 再補正の合計レイテンシ
 
@@ -174,16 +203,22 @@ class LLMCorrector(private val context: Context) {
     /**
      * LLMベース補正のメインメソッド
      * v1.0.41: キャッシュ対応
+     * v1.0.61: ジャンル情報を追加
+     * v1.0.75: Phase 3検出結果ヒントを追加
      *
      * @param text 補正対象テキスト
      * @param context 前後の文脈（オプション）
      * @param phase1Confidence Phase 1の補正信頼度（0.0-1.0）
+     * @param genre ジャンル情報（オプション）
+     * @param phase3Hints Phase 3形態素解析ヒント（オプション）
      * @return 補正されたテキストと信頼度スコア
      */
     fun correctWithLLM(
         text: String,
         context: String? = null,
-        phase1Confidence: Double = 0.0
+        phase1Confidence: Double = 0.0,
+        genre: String? = null,
+        phase3Hints: String? = null
     ): Pair<String, Double> {
 
         if (!ENABLE_LLM_CORRECTION) {
@@ -208,21 +243,79 @@ class LLMCorrector(private val context: Context) {
         val cached = correctionCache.get(cacheKey)
         if (cached != null) {
             cacheHits++
-            Log.d(TAG, "[LLM] Cache HIT for: '${text.take(30)}...' (hits: $cacheHits, misses: $cacheMisses)")
+            // v1.0.74: キャッシュエントリ年齢の計算
+            val entryAge = System.currentTimeMillis() - cached.timestamp
+            totalCacheEntryAge += entryAge
+            Log.d(TAG, "[LLM] Cache HIT for: '${text.take(30)}...' (hits: $cacheHits, misses: $cacheMisses, age: ${entryAge}ms)")
             return Pair(cached.correctedText, cached.confidence)
         }
 
         cacheMisses++
         Log.d(TAG, "[LLM] Cache MISS, starting LLM correction for: '${text.take(50)}...'")
 
+        // v1.0.75: Phase 3ヒントのログ
+        if (phase3Hints != null) {
+            Log.d(TAG, "[v1.0.75] Phase 3 hints: $phase3Hints")
+        }
+
         try {
             val startTime = System.currentTimeMillis()
 
-            // LLMプロンプトの構築
-            val prompt = buildCorrectionPrompt(text, context)
+            // LLMプロンプトの構築（v1.0.75: Phase 3ヒント追加）
+            val prompt = buildCorrectionPrompt(text, context, genre, phase3Hints)
 
-            // LLM実行
-            val correctedText = invokeLLM(prompt)
+            // v1.0.78: プロンプトトークン数概算ログ（文字数×2.5を目安）
+            val estimatedTokens = (prompt.length * 2.5).toInt()
+            Log.d(TAG, "[v1.0.78 TokenMetrics] Prompt length: ${prompt.length} chars, Estimated tokens: ~$estimatedTokens")
+            if (phase3Hints != null) {
+                val hintsLength = phase3Hints.length
+                val hintsTokens = (hintsLength * 2.5).toInt()
+                Log.d(TAG, "[v1.0.78 TokenMetrics] Phase3Hints length: $hintsLength chars (~$hintsTokens tokens)")
+            }
+
+            // v1.0.73: リトライロジックでラップされたLLM実行
+            var correctedText = ""
+            var attemptCount = 0
+            var lastException: Exception? = null
+
+            while (attemptCount < MAX_RETRY_ATTEMPTS) {
+                try {
+                    correctedText = invokeLLM(prompt)
+                    if (attemptCount > 0) {
+                        Log.d(TAG, "[v1.0.73 Retry] Success after $attemptCount retry attempt(s)")
+                    }
+                    break  // 成功したらループ終了
+                } catch (e: RetryableException) {
+                    attemptCount++
+                    lastException = e
+
+                    if (attemptCount >= MAX_RETRY_ATTEMPTS) {
+                        Log.e(TAG, "[v1.0.73 Retry] Max retry attempts ($MAX_RETRY_ATTEMPTS) reached")
+                        break
+                    }
+
+                    // リトライ待機時間の計算（指数バックオフ）
+                    val baseDelay = e.retryDelayMs
+                    val exponentialDelay = INITIAL_RETRY_DELAY_MS * (1 shl (attemptCount - 1))
+                    val actualDelay = maxOf(baseDelay, exponentialDelay).coerceAtMost(MAX_RETRY_DELAY_MS)
+
+                    Log.w(TAG, "[v1.0.73 Retry] Attempt $attemptCount failed, retrying after ${actualDelay}ms (base: ${baseDelay}ms, exponential: ${exponentialDelay}ms)")
+                    Log.d(TAG, "[v1.0.73 Retry] Error response: ${e.errorResponse?.take(200)}")
+
+                    // 統計更新
+                    retryCount++
+                    totalRetryWaitTime += actualDelay
+
+                    // 待機
+                    Thread.sleep(actualDelay)
+                }
+            }
+
+            // リトライ失敗時は元のテキストを返す
+            if (correctedText.isEmpty() && lastException != null) {
+                Log.e(TAG, "[v1.0.73 Retry] All retry attempts failed, using original text")
+                return Pair(text, phase1Confidence)
+            }
 
             // LLMが空を返した場合、元のテキストを返す
             if (correctedText.isEmpty()) {
@@ -238,6 +331,15 @@ class LLMCorrector(private val context: Context) {
             totalLLMLatency += duration
 
             Log.d(TAG, "[LLM] Initial correction completed in ${duration}ms (confidence: $confidence)")
+
+            // v1.0.78: 補正効果の詳細ログ
+            if (text != correctedText) {
+                Log.d(TAG, "[v1.0.78 CorrectionEffect] Original: '${text.take(50)}${if (text.length > 50) "..." else ""}'")
+                Log.d(TAG, "[v1.0.78 CorrectionEffect] Corrected: '${correctedText.take(50)}${if (correctedText.length > 50) "..." else ""}'")
+                Log.d(TAG, "[v1.0.78 CorrectionEffect] Change rate: ${String.format("%.1f", (1.0 - text.length.toDouble() / correctedText.length.toDouble()) * 100)}%")
+            } else {
+                Log.d(TAG, "[v1.0.78 CorrectionEffect] No changes made by LLM")
+            }
 
             // v1.0.45: 低信頼度の場合、反復補正を実行
             var finalCorrectedText = correctedText
@@ -583,22 +685,25 @@ class LLMCorrector(private val context: Context) {
      * LLM補正プロンプトの構築
      *
      * v1.0.41: トークン削減のため簡潔化（-40% tokens）
+     * v1.0.56: 精度向上のため詳細化（Japanese OCR特有の誤認識パターン追加）
+     * v1.0.57: プロンプト最適化（thoughts過剰消費の抑制、バランス改善）
+     * v1.0.75: Phase 3形態素解析ヒントを追加
+     * v1.0.77: プロンプト簡潔化（-30% tokens）
      */
-    private fun buildCorrectionPrompt(text: String, context: String?): String {
+    private fun buildCorrectionPrompt(text: String, context: String?, genre: String? = null, phase3Hints: String? = null): String {
+        val genreHint = genre ?: "一般"
+
         return """
-日本語OCR誤認識を補正してください。経済学用語です。
+日本語OCR補正。明確なエラーのみ補正、過剰補正禁止。
 
-ルール: 視覚的に類似した漢字・カタカナ・助詞の誤認識を修正。不確実なら維持。
+【ルール】形状類似漢字・促音のみ、文脈適合必須、不確実なら元維持
+【ジャンル】$genreHint
+【誤認識】経済:英→経,機作→機会 歴史:天→夭,皇→星 科学:実→宴,験→検 カナ:ビ→ピ,ツ→シ
+${if (context != null) "【文脈】$context\n" else ""}${if (phase3Hints != null) "【文法】$phase3Hints\n" else ""}
+【元】$text
 
-例:
-"能要と供靖の洪則" → "需要と供給の法則"
-"海格の無力性" → "価格の弾力性"
-
-${if (context != null) "文脈: $context\n" else ""}
-テキスト: $text
-
-JSON形式で出力:
-{"corrected": "補正後", "confidence": 0.95}
+JSON出力:{"corrected":"補正後","confidence":0.95,"changes":[{"from":"杏究","to":"研究","reason":"形状"}]}
+※0.7以上で採用、無変更時changes=[]
         """.trimIndent()
     }
 
@@ -606,6 +711,8 @@ JSON形式で出力:
      * v1.0.41: バッチ補正プロンプトの構築
      *
      * v1.0.41: トークン削減のため簡潔化（-45% tokens）
+     * v1.0.56: 精度向上のため詳細化（Japanese OCR特有の誤認識パターン追加）
+     * v1.0.57: プロンプト最適化（thoughts過剰消費の抑制）
      */
     private fun buildBatchCorrectionPrompt(texts: List<String>, context: String?): String {
         val textsBlock = texts.mapIndexed { index, text ->
@@ -613,41 +720,34 @@ JSON形式で出力:
         }.joinToString("\n")
 
         return """
-日本語OCR誤認識を複数補正してください。経済学用語です。
+経済学書籍の日本語OCR一括校正。誤認識: 英→経、機作→機会、海格→価格、コースト→コスト。
+信頼度: 1.0=完璧、0.95=軽微、0.90=中程度。
 
-ルール: 視覚的に類似した漢字・カタカナ・助詞の誤認識を修正。不確実なら維持。
-
-${if (context != null) "文脈: $context\n" else ""}
-テキスト:
+${if (context != null) "文脈: $context\n\n" else ""}入力:
 $textsBlock
 
-JSON配列で出力（全インデックス必須）:
-[{"index":0,"corrected":"補正後","confidence":0.95},{"index":1,"corrected":"補正後","confidence":0.90}]
+出力JSON配列（全インデックス必須）:
+[{"index":0,"corrected":"校正後","confidence":0.95}]
         """.trimIndent()
     }
 
     /**
      * v1.0.45: 反復補正プロンプトの構築（精密化・検証用）
+     * v1.0.56: 精度向上のため詳細化（OCR誤認識パターン追加）
+     * v1.0.57: プロンプト最適化（thoughts過剰消費の抑制）
      *
      * 初回補正の結果を検証し、過剰補正や誤補正を修正する。
      * 元のOCRテキストと比較して、適切な補正レベルを判断。
      */
     private fun buildRefinementPrompt(originalText: String, correctedText: String, context: String?): String {
         return """
-日本語OCR補正の検証と精密化を行ってください。経済学用語です。
+OCR補正の再検証。過剰補正を避け、経済学用語として自然に。目標信頼度: 0.95以上。
 
-元のOCRテキスト: $originalText
-補正済みテキスト: $correctedText
+元: $originalText
+補正済: $correctedText
+${if (context != null) "\n文脈: $context" else ""}
 
-タスク: 補正済みテキストを検証し、必要に応じて精密化してください。
-
-検証ポイント:
-1. 過剰補正: 元テキストと大きく異なる場合、元に近づける
-2. 視覚的類似性: OCR誤認識の典型パターンを考慮
-3. 文脈適合性: 経済学用語として自然か
-
-${if (context != null) "文脈: $context\n" else ""}
-JSON形式で出力:
+出力JSON:
 {"corrected": "精密化後", "confidence": 0.98}
         """.trimIndent()
     }
@@ -717,8 +817,8 @@ JSON形式で出力:
                 connection.requestMethod = "POST"
                 connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
                 connection.doOutput = true
-                connection.connectTimeout = 15000
-                connection.readTimeout = 15000
+                connection.connectTimeout = 30000  // v1.0.63: 15秒 → 30秒（安定性向上）
+                connection.readTimeout = 30000     // v1.0.63: 15秒 → 30秒（タイムアウト対策）
 
                 // リクエスト送信
                 OutputStreamWriter(connection.outputStream).use { writer ->
@@ -732,6 +832,16 @@ JSON形式で出力:
                     if (responseCode != HttpURLConnection.HTTP_OK) {
                         val errorStream = connection.errorStream?.bufferedReader()?.readText()
                         Log.e(TAG, "[LLM] API error: $errorStream")
+
+                        // v1.0.73: 429エラーの場合、リトライ可能性をチェック
+                        if (responseCode == 429 && ENABLE_RETRY) {
+                            val retryDelay = extractRetryDelay(errorStream ?: "")
+                            if (retryDelay != null) {
+                                // リトライ情報を例外に含めて投げる（外側のループで処理）
+                                throw RetryableException(retryDelay, errorStream)
+                            }
+                        }
+
                         return@withContext ""
                     }
 
@@ -856,8 +966,8 @@ JSON形式で出力:
                 connection.requestMethod = "POST"
                 connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
                 connection.doOutput = true
-                connection.connectTimeout = 15000
-                connection.readTimeout = 15000
+                connection.connectTimeout = 30000  // v1.0.63: 15秒 → 30秒（安定性向上）
+                connection.readTimeout = 30000     // v1.0.63: 15秒 → 30秒（タイムアウト対策）
 
                 OutputStreamWriter(connection.outputStream).use { writer ->
                     writer.write(requestBody.toString())
@@ -1198,6 +1308,9 @@ JSON形式で出力:
             entryJson.put("timestamp", result.timestamp)
             cacheData.put(key, entryJson)
 
+            // v1.0.74: キャッシュ書き込み統計
+            cacheWriteCount++
+
             // サイズ制限チェック（100エントリ超過時は古いものから削除）
             if (cacheData.length() > CACHE_SIZE) {
                 val keys = cacheData.keys().asSequence().toList()
@@ -1209,6 +1322,9 @@ JSON形式で出力:
                 // 古いエントリを削除
                 val toRemove = sorted.take(cacheData.length() - CACHE_SIZE)
                 toRemove.forEach { (k, _) -> cacheData.remove(k) }
+
+                // v1.0.74: eviction統計
+                cacheEvictions += toRemove.size
             }
 
             prefs.edit().putString(CACHE_KEY, cacheData.toString()).apply()
@@ -1256,6 +1372,109 @@ JSON形式で出力:
         } catch (e: Exception) {
             Log.e(TAG, "[v1.0.42] Failed to load cache: ${e.message}", e)
         }
+    }
+
+    /**
+     * v1.0.73: RetryInfoからリトライ待機時間を抽出
+     *
+     * Gemini APIの429エラーレスポンスから待機時間を取得
+     * 例: "49s" → 49000ms
+     */
+    private fun extractRetryDelay(errorResponse: String): Long? {
+        return try {
+            val errorJson = JSONObject(errorResponse)
+            if (errorJson.has("error")) {
+                val error = errorJson.getJSONObject("error")
+                if (error.has("details")) {
+                    val details = error.getJSONArray("details")
+                    for (i in 0 until details.length()) {
+                        val detail = details.getJSONObject(i)
+                        if (detail.has("@type") &&
+                            detail.getString("@type") == "type.googleapis.com/google.rpc.RetryInfo") {
+                            if (detail.has("retryDelay")) {
+                                val retryDelay = detail.getString("retryDelay")
+                                // "49s" → 49000, "49.5s" → 49500
+                                val seconds = retryDelay.removeSuffix("s").toDoubleOrNull()
+                                if (seconds != null) {
+                                    val delayMs = (seconds * 1000).toLong()
+                                    // 最大60秒に制限
+                                    return delayMs.coerceAtMost(MAX_RETRY_DELAY_MS)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            null
+        } catch (e: Exception) {
+            Log.w(TAG, "[v1.0.73 Retry] Failed to extract retry delay: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * v1.0.73: リトライ統計を取得
+     */
+    fun getRetryStatistics(): Pair<Int, Long> {
+        return Pair(retryCount, totalRetryWaitTime)
+    }
+
+    /**
+     * v1.0.74: キャッシュ統計を取得
+     * @return Triple(cacheHits, cacheMisses, hitRate)
+     */
+    fun getCacheStatistics(): Triple<Int, Int, Int> {
+        val total = cacheHits + cacheMisses
+        val hitRate = if (total > 0) (cacheHits * 100 / total) else 0
+        return Triple(cacheHits, cacheMisses, hitRate)
+    }
+
+    /**
+     * v1.0.74: 詳細なキャッシュ統計を取得
+     * @return Map with keys: hits, misses, hitRate, writes, evictions, size, avgAge
+     */
+    fun getDetailedCacheStatistics(): Map<String, Long> {
+        val total = cacheHits + cacheMisses
+        val hitRate = if (total > 0) (cacheHits.toLong() * 100 / total) else 0
+        val avgAge = if (cacheHits > 0) totalCacheEntryAge / cacheHits else 0
+
+        return mapOf(
+            "hits" to cacheHits.toLong(),
+            "misses" to cacheMisses.toLong(),
+            "hitRate" to hitRate,
+            "writes" to cacheWriteCount.toLong(),
+            "evictions" to cacheEvictions.toLong(),
+            "size" to correctionCache.size().toLong(),
+            "avgAge" to avgAge
+        )
+    }
+
+    /**
+     * v1.0.74: 統計情報をログ出力（キャッシュ統計拡充）
+     */
+    fun logStatistics() {
+        val avgLatency = if (llmCallCount > 0) totalLLMLatency / llmCallCount else 0
+        val cacheTotal = cacheHits + cacheMisses
+        val hitRate = if (cacheTotal > 0) (cacheHits.toDouble() / cacheTotal * 100).toInt() else 0
+        val avgCacheAge = if (cacheHits > 0) totalCacheEntryAge / cacheHits else 0
+
+        Log.i(TAG, "========================================")
+        Log.i(TAG, "[v1.0.74] LLM Corrector Statistics")
+        Log.i(TAG, "========================================")
+        Log.i(TAG, "LLM Calls: $llmCallCount")
+        Log.i(TAG, "Average Latency: ${avgLatency}ms")
+        Log.i(TAG, "----------------------------------------")
+        Log.i(TAG, "Cache Hits: $cacheHits")
+        Log.i(TAG, "Cache Misses: $cacheMisses")
+        Log.i(TAG, "Cache Hit Rate: $hitRate%")
+        Log.i(TAG, "Cache Writes: $cacheWriteCount")
+        Log.i(TAG, "Cache Evictions: $cacheEvictions")
+        Log.i(TAG, "Cache Size: ${correctionCache.size()}")
+        Log.i(TAG, "Average Cache Age: ${avgCacheAge}ms (${avgCacheAge / 1000}s)")
+        Log.i(TAG, "----------------------------------------")
+        Log.i(TAG, "Retry Count: $retryCount")
+        Log.i(TAG, "Total Retry Wait Time: ${totalRetryWaitTime}ms (${totalRetryWaitTime / 1000}s)")
+        Log.i(TAG, "========================================")
     }
 
     /**
