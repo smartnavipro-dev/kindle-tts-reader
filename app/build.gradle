@@ -11,8 +11,8 @@ android {
         applicationId "com.kindletts.reader"
         minSdk 21
         targetSdk 34
-        versionCode 58
-        versionName "1.0.55"
+        versionCode 84
+        versionName "1.0.81"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
@@ -73,6 +73,8 @@ dependencies {
 
     // Phase 2: Kuromoji for morphological analysis (v1.0.32)
     implementation 'com.atilika.kuromoji:kuromoji-ipadic:0.9.0'
+    // Phase 3: UniDic for advanced particle detection (v1.0.64)
+    implementation 'com.atilika.kuromoji:kuromoji-unidic:0.9.0'
 
     // v1.0.40: Google AI SDK for Gemini integration
     // v1.0.46: Updated to 0.9.0 (last version before deprecation)
