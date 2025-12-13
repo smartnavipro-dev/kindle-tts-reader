@@ -1,0 +1,11 @@
+
+            // ひらがなを含むトークンのみ処理（Phase 3）
+            if (containsHiragana(token.surface)) {
+                // Phase 3: 促音誤認識（つ→っ）
+                val sokuonMisrecognitions = detectSokuonMisrecognition(token.surface, index, tokens, text)
+                suggestions.addAll(sokuonMisrecognitions)
+
+                // Phase 3: 促音脱落検出
+                val sokuonOmissions = detectSokuonOmission(token.surface, index, tokens, text)
+                suggestions.addAll(sokuonOmissions)
+            }

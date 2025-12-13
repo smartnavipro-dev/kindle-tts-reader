@@ -13,12 +13,15 @@ import android.os.Looper
 import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.util.Log
+import android.graphics.Color
 import android.widget.SeekBar
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.kindletts.reader.databinding.ActivityMainBinding
+import com.kindletts.reader.ocr.QuotaManager
 import java.util.*
 
 class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
@@ -26,6 +29,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var binding: ActivityMainBinding
     private var textToSpeech: TextToSpeech? = null
     private lateinit var sharedPreferences: SharedPreferences
+
+    // v1.0.82: QuotaManager
+    private lateinit var quotaManager: QuotaManager
+    private lateinit var quotaTextView: TextView
 
     // 状態管理
     private var isReading = false
@@ -73,6 +80,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         // SharedPreferences初期化
         sharedPreferences = getSharedPreferences("KindleTTSPrefs", Context.MODE_PRIVATE)
+
+        // v1.0.82: QuotaManager初期化
+        quotaManager = QuotaManager(this)
+        quotaTextView = binding.quotaTextView
+        updateQuotaDisplay()
 
         // TTS初期化
         textToSpeech = TextToSpeech(this, this)
@@ -416,6 +428,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         super.onResume()
         updatePermissionButtonStates()
         checkAccessibilityServiceEnabled()
+        updateQuotaDisplay()  // v1.0.82: クォータ表示更新
 
         // ✅ v1.0.18 FIX: サービスが停止していたらMainActivityの状態をリセット
         // 「×」ボタンでサービスが停止された場合に対応
@@ -450,6 +463,23 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun debugLog(message: String, data: Any? = null) {
         Log.d(TAG, "[$TAG] $message ${if (data != null) ": $data" else ""}")
+    }
+
+    /**
+     * v1.0.82: クォータ表示を更新
+     */
+    private fun updateQuotaDisplay() {
+        runOnUiThread {
+            val status = quotaManager.getStatus()
+            quotaTextView.text = "${status.remaining}/${status.limit}"
+
+            // 色分け表示
+            when {
+                status.remaining >= 15 -> quotaTextView.setTextColor(Color.GREEN)
+                status.remaining >= 5 -> quotaTextView.setTextColor(Color.rgb(255, 165, 0)) // Orange
+                else -> quotaTextView.setTextColor(Color.RED)
+            }
+        }
     }
 
     companion object {

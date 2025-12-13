@@ -46,6 +46,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
     private var mediaProjection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
+    private var latestImage: Image? = null  // v1.0.83: OnImageAvailableListenerから取得した最新画像
     private var screenWidth = 0
     private var screenHeight = 0
 
@@ -201,10 +202,25 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             }, Handler(Looper.getMainLooper()))
 
             // ImageReader設定
-            imageReader = ImageReader.newInstance(screenWidth, screenHeight, PixelFormat.RGBA_8888, 2)
+            imageReader = ImageReader.newInstance(screenWidth, screenHeight, PixelFormat.RGBA_8888, 5)  // v1.0.83: maxImages増加 (2→5)
 
-            // ImageReader コールバックは不要（手動/自動OCRで明示的に取得するため）
-            // setOnImageAvailableListenerは使用せず、必要時にacquireLatestImageを呼び出す
+
+            // v1.0.83: OnImageAvailableListenerで画像をキャッシュ
+            imageReader?.setOnImageAvailableListener({ reader ->
+                try {
+                    val image = reader.acquireLatestImage()
+                    if (image != null) {
+                        debugLog("Image available from listener", "size: ${image.width}x${image.height}")
+                        // 古い画像を解放してから新しい画像を保存
+                        latestImage?.close()
+                        latestImage = image
+                    } else {
+                        debugLog("OnImageAvailableListener: null image")
+                    }
+                } catch (e: Exception) {
+                    debugLog("Error in OnImageAvailableListener", e.message ?: "unknown")
+                }
+            }, Handler(Looper.getMainLooper()))
 
             // VirtualDisplay作成
             virtualDisplay = mediaProjection?.createVirtualDisplay(
@@ -486,13 +502,26 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         debugLog("Performing OCR")
 
         try {
-            val image = imageReader?.acquireLatestImage()
-            debugLog("Image acquired", "image: ${image != null}")
+            // v1.0.83: まずキャッシュされた画像を使用、なければ直接取得
+            var image = latestImage
+            var usingCachedImage = true
+            
+            if (image == null) {
+                usingCachedImage = false
+                image = imageReader?.acquireLatestImage()
+                debugLog("Image acquired directly", "image: ${image != null}")
+            } else {
+                debugLog("Using cached image from listener", "image: ${image != null}")
+                latestImage = null  // キャッシュをクリア（1回のみ使用）
+            }
 
             if (image != null) {
-                debugLog("Converting image to bitmap")
+                debugLog("Converting image to bitmap", "cached: $usingCachedImage")
                 val bitmap = convertImageToBitmap(image)
-                image.close()
+                if (!usingCachedImage) {
+                    image.close()  // 直接取得した画像のみここでclose
+                }
+                // キャッシュされた画像はconvertImageToBitmapで処理後にcloseされる
 
                 debugLog("Bitmap created", "bitmap: ${bitmap != null}, size: ${bitmap?.width}x${bitmap?.height}")
 
@@ -1632,6 +1661,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         } catch (e: Exception) {
             debugLog("Error closing ImageReader", e.message)
         }
+// v1.0.83: latestImage解放        try {            latestImage?.close()            latestImage = null        } catch (e: Exception) {            debugLog("Error closing latestImage", e.message)        }
 
         // 状態リセット
         appState.screenCaptureActive = false

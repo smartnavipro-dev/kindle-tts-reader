@@ -1,0 +1,156 @@
+
+    /**
+     * ひらがなが含まれているか判定
+     */
+    private fun containsHiragana(text: String): Boolean {
+        return text.any { it in 'ぁ'..'ん' }
+    }
+
+    /**
+     * Phase 3: 促音誤認識を検出（つ→っ）
+     */
+    private fun detectSokuonMisrecognition(
+        surface: String,
+        index: Int,
+        tokens: List<com.atilika.kuromoji.unidic.Token>,
+        originalText: String
+    ): List<ChoonSuggestion> {
+        val suggestions = mutableListOf<ChoonSuggestion>()
+
+        // 「つ」を含むか確認
+        if (!surface.contains('つ')) {
+            return suggestions
+        }
+
+        // 各「つ」の位置を確認
+        surface.forEachIndexed { i, char ->
+            if (char == 'つ' && i < surface.length - 1) {
+                val nextChar = surface[i + 1]
+
+                // 次の文字が促音フレンドリーな子音か判定
+                if (isSokuonFriendlyConsonant(nextChar)) {
+                    // 「つ」→「っ」に変換
+                    val correctedForm = surface.replaceRange(i, i + 1, "っ")
+
+                    // 辞書マッチング
+                    val dictMatch = sokuonWordDict.find { it.word == correctedForm }
+
+                    if (dictMatch != null) {
+                        val confidence = calculateSokuonConfidence(
+                            surface,
+                            correctedForm,
+                            dictMatch.frequency,
+                            isInDict = true
+                        )
+
+                        if (confidence >= 0.5) {
+                            val position = calculatePosition(tokens, index, originalText)
+
+                            suggestions.add(
+                                ChoonSuggestion(
+                                    position = position,
+                                    originalForm = surface,
+                                    correctedForm = correctedForm,
+                                    confidence = confidence,
+                                    reason = "Phase3: 促音誤認識（つ→っ）",
+                                    misrecognizedChars = listOf('つ'),
+                                    phase = 3
+                                )
+                            )
+
+                            Log.d(TAG, "[v1.0.69 Phase3] '$surface' → '$correctedForm' (conf=${String.format("%.2f", confidence)}, つ→っ)")
+                        }
+                    }
+                }
+            }
+        }
+
+        return suggestions
+    }
+
+    /**
+     * Phase 3: 促音脱落を検出
+     */
+    private fun detectSokuonOmission(
+        surface: String,
+        index: Int,
+        tokens: List<com.atilika.kuromoji.unidic.Token>,
+        originalText: String
+    ): List<ChoonSuggestion> {
+        val suggestions = mutableListOf<ChoonSuggestion>()
+
+        // 最初の2文字でインデックス検索
+        val prefix = if (surface.length >= 2) surface.take(2) else surface
+        val candidates = sokuonDictIndex[prefix] ?: emptyList()
+
+        candidates.forEach { dictWord ->
+            // 編集距離を計算（促音なし版）
+            val distance = levenshteinDistance(surface, dictWord.withoutSokuon)
+
+            // 編集距離が0または1で、促音挿入のみの場合
+            if (distance <= 1) {
+                val confidence = calculateSokuonConfidence(
+                    surface,
+                    dictWord.word,
+                    dictWord.frequency,
+                    isInDict = true
+                )
+
+                if (confidence >= 0.5) {
+                    val position = calculatePosition(tokens, index, originalText)
+
+                    suggestions.add(
+                        ChoonSuggestion(
+                            position = position,
+                            originalForm = surface,
+                            correctedForm = dictWord.word,
+                            confidence = confidence,
+                            reason = "Phase3: 促音脱落（編集距離=${distance}）",
+                            misrecognizedChars = emptyList(),
+                            phase = 3
+                        )
+                    )
+
+                    Log.d(TAG, "[v1.0.69 Phase3] '$surface' → '${dictWord.word}' (conf=${String.format("%.2f", confidence)}, omission)")
+                }
+            }
+        }
+
+        return suggestions
+    }
+
+    /**
+     * Phase 3: 促音補正の信頼度計算
+     */
+    private fun calculateSokuonConfidence(
+        original: String,
+        corrected: String,
+        frequency: Int,
+        isInDict: Boolean
+    ): Double {
+        var score = 0.0
+
+        // 1. 基本信頼度（30%）
+        score += if (isInDict) 0.3 else 0.1
+
+        // 2. 単語頻度スコア（30%）
+        val frequencyScore = frequency / 10.0 * 0.3
+        score += frequencyScore
+
+        // 3. 音韻的妥当性（25%）
+        // 促音の後ろが促音フレンドリーな子音か確認
+        val sokuonPos = corrected.indexOf('っ')
+        if (sokuonPos >= 0 && sokuonPos < corrected.length - 1) {
+            val nextChar = corrected[sokuonPos + 1]
+            val isPhoneticallyCorrect = isSokuonFriendlyConsonant(nextChar)
+            score += if (isPhoneticallyCorrect) 0.25 else 0.1
+        } else {
+            score += 0.1
+        }
+
+        // 4. ひらがな純度（15%）
+        val hiraganaPurity = corrected.count { it in 'ぁ'..'ん' }.toDouble() / corrected.length
+        score += hiraganaPurity * 0.15
+
+        return score.coerceIn(0.0, 1.0)
+    }

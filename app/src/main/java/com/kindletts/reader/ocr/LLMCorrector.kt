@@ -154,6 +154,9 @@ class LLMCorrector(private val context: Context) {
         private const val MAX_REFINEMENT_ITERATIONS = 1          // 最大反復回数（1回=合計2段階補正）
     }
 
+    // v1.0.82: QuotaManager統合
+    private val quotaManager = QuotaManager(context)
+
     // v1.0.41: LRUキャッシュ（補正結果をキャッシュ）
     private val correctionCache = LruCache<String, CorrectionResult>(CACHE_SIZE)
 
@@ -189,6 +192,7 @@ class LLMCorrector(private val context: Context) {
     init {
         loadCache()
         Log.d(TAG, "[v1.0.42] LLMCorrector initialized with persistent cache")
+        quotaManager.logCurrentStatus()  // v1.0.82: 起動時にクォータ状態表示
     }
 
     /**
@@ -225,6 +229,15 @@ class LLMCorrector(private val context: Context) {
             Log.d(TAG, "[LLM] LLM correction is disabled")
             return Pair(text, 0.0)
         }
+
+        // v1.0.82: クォータチェック（API呼び出し前）
+        val quotaStatus = quotaManager.getStatus()
+        if (!quotaManager.canMakeRequest()) {
+            Log.w(TAG, "[v1.0.82] API quota exceeded (${quotaStatus.count}/${quotaStatus.limit}), using original text")
+            Log.w(TAG, "[v1.0.82] Quota resets in: ${quotaManager.getResetTimeString()}")
+            return Pair(text, phase1Confidence)
+        }
+        Log.d(TAG, "[v1.0.82] API Quota: ${quotaStatus.remaining}/${quotaStatus.limit} remaining")
 
         // Phase 1の信頼度が高い場合はスキップ
         if (phase1Confidence >= MIN_CONFIDENCE_FOR_PHASE1) {
@@ -844,6 +857,11 @@ ${if (context != null) "\n文脈: $context" else ""}
 
                         return@withContext ""
                     }
+
+                // v1.0.82: API成功時にクォータを記録
+                quotaManager.recordAPICall()
+                val updatedStatus = quotaManager.getStatus()
+                Log.d(TAG, "[v1.0.82] API call recorded: ${updatedStatus.count}/${updatedStatus.limit}")
 
                 // レスポンス読み取り
                 val responseText = connection.inputStream.bufferedReader().readText()
