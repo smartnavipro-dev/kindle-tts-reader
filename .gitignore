@@ -89,4 +89,12 @@ lint-results.html
 lint-results.xml
 
 # Local development
-gradlewrappergradle-wrapper.jar
+gradlewrappergradle-wrapper.jar# Claude Code settings
+.claude/
+
+# Build logs
+build_*.log
+
+# Test screenshots  
+screenshots/*.png
+screenshots/*.jpg

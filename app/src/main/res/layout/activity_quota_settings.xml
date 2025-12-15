@@ -1,0 +1,229 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FFFFFF"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <!-- タイトル -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="API Quota 管理"
+            android:textSize="28sp"
+            android:textStyle="bold"
+            android:textColor="#000000"
+            android:gravity="center"
+            android:paddingBottom="8dp" />
+
+        <!-- 区切り線 -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="2dp"
+            android:background="#CCCCCC"
+            android:layout_marginBottom="24dp" />
+
+        <!-- 使用状況セクション -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="使用状況"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="#333333"
+            android:paddingBottom="12dp" />
+
+        <!-- 現在の使用状況 -->
+        <TextView
+            android:id="@+id/quotaStatusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="現在の使用状況: 0/20"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:textColor="#4CAF50"
+            android:paddingBottom="8dp" />
+
+        <!-- 残りリクエスト数 -->
+        <TextView
+            android:id="@+id/remainingText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="残り: 20 リクエスト"
+            android:textSize="18sp"
+            android:textColor="#666666"
+            android:paddingBottom="8dp" />
+
+        <!-- 使用率 -->
+        <TextView
+            android:id="@+id/usagePercentText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="使用率: 0%"
+            android:textSize="18sp"
+            android:textColor="#666666"
+            android:paddingBottom="24dp" />
+
+        <!-- リセット情報セクション -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="リセット情報"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="#333333"
+            android:paddingBottom="12dp" />
+
+        <!-- リセットまでの時間 -->
+        <TextView
+            android:id="@+id/resetTimeText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="リセットまで: --時間 --分"
+            android:textSize="16sp"
+            android:textColor="#666666"
+            android:paddingBottom="8dp" />
+
+        <!-- 次回リセット時刻 -->
+        <TextView
+            android:id="@+id/nextResetText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="次回リセット: ----/--/-- --:--"
+            android:textSize="16sp"
+            android:textColor="#666666"
+            android:paddingBottom="24dp" />
+
+        <!-- 統計情報セクション -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="統計情報"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="#333333"
+            android:paddingBottom="12dp" />
+
+        <!-- 本日の使用回数 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingBottom="8dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="本日の使用:"
+                android:textSize="16sp"
+                android:textColor="#666666" />
+
+            <TextView
+                android:id="@+id/todayUsageText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0回"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="#333333" />
+        </LinearLayout>
+
+        <!-- 平均使用頻度 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingBottom="8dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="平均使用頻度:"
+                android:textSize="16sp"
+                android:textColor="#666666" />
+
+            <TextView
+                android:id="@+id/avgFrequencyText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0.00回/時間"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="#333333" />
+        </LinearLayout>
+
+        <!-- 最終使用時刻 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingBottom="24dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="最終使用:"
+                android:textSize="16sp"
+                android:textColor="#666666" />
+
+            <TextView
+                android:id="@+id/lastUsedText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="未使用"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="#333333" />
+        </LinearLayout>
+
+        <!-- 区切り線 -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#CCCCCC"
+            android:layout_marginBottom="24dp" />
+
+        <!-- 手動リセットボタン (DEBUG mode only) -->
+        <Button
+            android:id="@+id/btnManualReset"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="手動リセット (DEBUG)"
+            android:textSize="16sp"
+            android:backgroundTint="#FF9800"
+            android:textColor="#FFFFFF"
+            android:visibility="gone"
+            android:layout_marginBottom="16dp" />
+
+        <!-- 閉じるボタン -->
+        <Button
+            android:id="@+id/btnClose"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="閉じる"
+            android:textSize="16sp"
+            android:backgroundTint="#2196F3"
+            android:textColor="#FFFFFF" />
+
+        <!-- 注意書き -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="※API残量は24時間ごとに自動リセットされます"
+            android:textSize="12sp"
+            android:textColor="#999999"
+            android:gravity="center"
+            android:paddingTop="16dp" />
+
+    </LinearLayout>
+</ScrollView>

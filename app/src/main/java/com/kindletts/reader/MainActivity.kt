@@ -14,6 +14,8 @@ import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.util.Log
 import android.graphics.Color
+import android.animation.ObjectAnimator
+import android.animation.ArgbEvaluator
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
@@ -23,6 +25,11 @@ import androidx.appcompat.app.AppCompatActivity
 import com.kindletts.reader.databinding.ActivityMainBinding
 import com.kindletts.reader.ocr.QuotaManager
 import java.util.*
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.WorkManager
+import com.kindletts.reader.workers.QuotaResetWorker
+import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
@@ -98,6 +105,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         updatePermissionButtonStates()
         updateUIState()
 
+        
+        // v1.0.84: Quota Reset通知WorkManager設定
+        setupQuotaResetWorker()
         debugLog("MainActivity initialization completed")
     }
 
@@ -112,6 +122,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         // 権限ボタン（アクセシビリティのみ表示）
         binding.btnAccessibility.setOnClickListener { openAccessibilitySettings() }
+        // v1.0.84: Quota設定画面への遷移
+        binding.quotaDisplay.setOnClickListener { openQuotaSettings() }
 
         // 設定コントロール
         binding.speedSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -274,6 +286,34 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
         accessibilitySettingsLauncher.launch(intent)
+    }
+    /**
+     * v1.0.84: Quota設定画面を開く
+     */
+    private fun openQuotaSettings() {
+        debugLog("Opening quota settings")
+
+        val intent = Intent(this, QuotaSettingsActivity::class.java)
+        startActivity(intent)
+    }
+    
+    /**
+     * v1.0.84: Quota Reset通知WorkManagerの設定
+     */
+    private fun setupQuotaResetWorker() {
+        debugLog("Setting up quota reset worker")
+        
+        val quotaCheckRequest = PeriodicWorkRequestBuilder<QuotaResetWorker>(
+            15, TimeUnit.MINUTES
+        ).build()
+        
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+            "quota_reset_check",
+            ExistingPeriodicWorkPolicy.KEEP,
+            quotaCheckRequest
+        )
+        
+        debugLog("Quota reset worker scheduled")
     }
 
     private fun startOverlayServiceAndReading(data: Intent) {
@@ -464,21 +504,47 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private fun debugLog(message: String, data: Any? = null) {
         Log.d(TAG, "[$TAG] $message ${if (data != null) ": $data" else ""}")
     }
-
     /**
      * v1.0.82: クォータ表示を更新
+     * v1.0.84: パーセント表示とアニメーション追加
      */
     private fun updateQuotaDisplay() {
         runOnUiThread {
             val status = quotaManager.getStatus()
-            quotaTextView.text = "${status.remaining}/${status.limit}"
-
-            // 色分け表示
-            when {
-                status.remaining >= 15 -> quotaTextView.setTextColor(Color.GREEN)
-                status.remaining >= 5 -> quotaTextView.setTextColor(Color.rgb(255, 165, 0)) // Orange
-                else -> quotaTextView.setTextColor(Color.RED)
+            
+            // v1.0.84: パーセント表示追加
+            val usagePercent = ((status.count.toFloat() / status.limit) * 100).toInt()
+            val newText = "API残量: ${status.remaining}/${status.limit} (${usagePercent}%)"
+            
+            // v1.0.84: フェードアウト→テキスト変更→フェードイン
+            quotaTextView.animate()
+                .alpha(0f)
+                .setDuration(150)
+                .withEndAction {
+                    quotaTextView.text = newText
+                    quotaTextView.animate()
+                        .alpha(1f)
+                        .setDuration(150)
+                        .start()
+                }
+                .start()
+            
+            // v1.0.84: 色分け表示（スムーズトランジション）
+            val targetColor = when {
+                status.remaining >= 15 -> Color.GREEN
+                status.remaining >= 5 -> Color.rgb(255, 165, 0) // Orange
+                else -> Color.RED
             }
+            
+            val colorAnimator = ObjectAnimator.ofObject(
+                quotaTextView,
+                "textColor",
+                ArgbEvaluator(),
+                quotaTextView.currentTextColor,
+                targetColor
+            )
+            colorAnimator.duration = 300
+            colorAnimator.start()
         }
     }
 
