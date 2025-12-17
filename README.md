@@ -9,9 +9,9 @@
 [![Android](https://img.shields.io/badge/Platform-Android%205.0%2B-green.svg)](https://android.com)
 [![Kotlin](https://img.shields.io/badge/Language-Kotlin-blue.svg)](https://kotlinlang.org)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![APK](https://img.shields.io/badge/Download-APK-red.svg)](https://github.com/yourusername/kindle-tts-reader/releases)
+[![APK](https://img.shields.io/badge/Download-APK-red.svg)](https://github.com/smartnavipro-dev/kindle-tts-reader/releases)
 
-[🇯🇵 日本語 README](README_ja.md) | [📱 Download APK](https://github.com/yourusername/kindle-tts-reader/releases/latest) | [📋 Documentation](docs/)
+[🇯🇵 日本語 README](README_ja.md) | [📱 Download APK](https://github.com/smartnavipro-dev/kindle-tts-reader/releases/latest) | [📋 Documentation](docs/)
 
 </div>
 
@@ -60,14 +60,14 @@ Kindle TTS Reader transforms your reading experience by automatically reading Ki
 ## 🚀 **Installation**
 
 ### **Method 1: Download APK (Recommended)**
-1. Go to [Releases](https://github.com/yourusername/kindle-tts-reader/releases/latest)
-2. Download `app-release.apk` (22.7MB)
+1. Go to [Releases](https://github.com/smartnavipro-dev/kindle-tts-reader/releases/latest)
+2. Download `app-release.apk` (82MB)
 3. Enable "Unknown Sources" in Android settings
 4. Install the APK
 
 ### **Method 2: Build from Source**
 ```bash
-git clone https://github.com/yourusername/kindle-tts-reader.git
+git clone https://github.com/smartnavipro-dev/kindle-tts-reader.git
 cd kindle-tts-reader
 ./gradlew assembleDebug
 ```
@@ -237,7 +237,7 @@ We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.
 ### **Development Setup**
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/kindle-tts-reader.git
+git clone https://github.com/smartnavipro-dev/kindle-tts-reader.git
 
 # Open in Android Studio
 cd kindle-tts-reader
@@ -258,10 +258,10 @@ cd kindle-tts-reader
 
 ## 📊 **Project Stats**
 
-![GitHub stars](https://img.shields.io/github/stars/yourusername/kindle-tts-reader?style=social)
-![GitHub forks](https://img.shields.io/github/forks/yourusername/kindle-tts-reader?style=social)
-![GitHub issues](https://img.shields.io/github/issues/yourusername/kindle-tts-reader)
-![GitHub license](https://img.shields.io/github/license/yourusername/kindle-tts-reader)
+![GitHub stars](https://img.shields.io/github/stars/smartnavipro-dev/kindle-tts-reader?style=social)
+![GitHub forks](https://img.shields.io/github/forks/smartnavipro-dev/kindle-tts-reader?style=social)
+![GitHub issues](https://img.shields.io/github/issues/smartnavipro-dev/kindle-tts-reader)
+![GitHub license](https://img.shields.io/github/license/smartnavipro-dev/kindle-tts-reader)
 
 - **Lines of Code**: ~1,200 (Kotlin)
 - **Commits**: 50+
@@ -358,10 +358,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 **Support**
 
-- 🐛 **Bug Reports**: [GitHub Issues](https://github.com/yourusername/kindle-tts-reader/issues)
-- 💡 **Feature Requests**: [GitHub Discussions](https://github.com/yourusername/kindle-tts-reader/discussions)
-- 📧 **Contact**: your.email@example.com
-- 🐦 **Twitter**: [@yourusername](https://twitter.com/yourusername)
+- 🐛 **Bug Reports**: [GitHub Issues](https://github.com/smartnavipro-dev/kindle-tts-reader/issues)
+- 💡 **Feature Requests**: [GitHub Discussions](https://github.com/smartnavipro-dev/kindle-tts-reader/discussions)
+- 📧 **Contact**: contact@smartnavipro.dev
+- 🐦 **Twitter**: [@smartnavipro](https://twitter.com/smartnavipro)
 
 ---
 
@@ -369,7 +369,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 **⭐ Star this repo if you find it useful! ⭐**
 
-Made with ❤️ by [Your Name](https://github.com/yourusername)
+Made with ❤️ by [SmartNaviPro Development](https://github.com/smartnavipro-dev)
 
 [🔝 Back to Top](#-kindle-tts-reader)
 
