@@ -9,9 +9,9 @@
 [![Android](https://img.shields.io/badge/Platform-Android%205.0%2B-green.svg)](https://android.com)
 [![Kotlin](https://img.shields.io/badge/Language-Kotlin-blue.svg)](https://kotlinlang.org)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![APK](https://img.shields.io/badge/Download-APK-red.svg)](https://github.com/yourusername/kindle-tts-reader/releases)
+[![APK](https://img.shields.io/badge/Download-APK-red.svg)](https://github.com/smartnavipro-dev/kindle-tts-reader/releases)
 
-[🇺🇸 English README](README.md) | [📱 APKダウンロード](https://github.com/yourusername/kindle-tts-reader/releases/latest) | [📋 ドキュメント](docs/)
+[🇺🇸 English README](README.md) | [📱 APKダウンロード](https://github.com/smartnavipro-dev/kindle-tts-reader/releases/latest) | [📋 ドキュメント](docs/)
 
 </div>
 
@@ -58,14 +58,14 @@ Kindle TTS Reader は、Kindle アプリで開いた本を自動で読み上げ�
 ## 🚀 **インストール方法**
 
 ### **方法1: APKダウンロード（推奨）**
-1. [リリースページ](https://github.com/yourusername/kindle-tts-reader/releases/latest)にアクセス
+1. [リリースページ](https://github.com/smartnavipro-dev/kindle-tts-reader/releases/latest)にアクセス
 2. `app-release.apk`（22.7MB）をダウンロード
 3. Androidの設定で「不明なソースからのアプリ」を許可
 4. APKファイルをインストール
 
 ### **方法2: ソースからビルド**
 ```bash
-git clone https://github.com/yourusername/kindle-tts-reader.git
+git clone https://github.com/smartnavipro-dev/kindle-tts-reader.git
 cd kindle-tts-reader
 ./gradlew assembleDebug
 ```
@@ -160,7 +160,7 @@ cd kindle-tts-reader
 ### **開発環境のセットアップ**
 ```bash
 # リポジトリをクローン
-git clone https://github.com/yourusername/kindle-tts-reader.git
+git clone https://github.com/smartnavipro-dev/kindle-tts-reader.git
 
 # Android Studio で開く
 cd kindle-tts-reader
@@ -181,10 +181,10 @@ cd kindle-tts-reader
 
 ## 📊 **プロジェクト統計**
 
-![GitHub stars](https://img.shields.io/github/stars/yourusername/kindle-tts-reader?style=social)
-![GitHub forks](https://img.shields.io/github/forks/yourusername/kindle-tts-reader?style=social)
-![GitHub issues](https://img.shields.io/github/issues/yourusername/kindle-tts-reader)
-![GitHub license](https://img.shields.io/github/license/yourusername/kindle-tts-reader)
+![GitHub stars](https://img.shields.io/github/stars/smartnavipro-dev/kindle-tts-reader?style=social)
+![GitHub forks](https://img.shields.io/github/forks/smartnavipro-dev/kindle-tts-reader?style=social)
+![GitHub issues](https://img.shields.io/github/issues/smartnavipro-dev/kindle-tts-reader)
+![GitHub license](https://img.shields.io/github/license/smartnavipro-dev/kindle-tts-reader)
 
 - **コード行数**: ~1,200行 (Kotlin)
 - **コミット数**: 50回以上
@@ -254,10 +254,10 @@ cd kindle-tts-reader
 
 ## 📞 **サポート**
 
-- 🐛 **バグ報告**: [GitHub Issues](https://github.com/yourusername/kindle-tts-reader/issues)
-- 💡 **機能要望**: [GitHub Discussions](https://github.com/yourusername/kindle-tts-reader/discussions)
-- 📧 **連絡先**: your.email@example.com
-- 🐦 **Twitter**: [@yourusername](https://twitter.com/yourusername)
+- 🐛 **バグ報告**: [GitHub Issues](https://github.com/smartnavipro-dev/kindle-tts-reader/issues)
+- 💡 **機能要望**: [GitHub Discussions](https://github.com/smartnavipro-dev/kindle-tts-reader/discussions)
+- 📧 **連絡先**: contact@smartnavipro.dev
+- 🐦 **Twitter**: [@smartnavipro](https://twitter.com/smartnavipro)
 
 ---
 
@@ -265,7 +265,7 @@ cd kindle-tts-reader
 
 **⭐ このリポジトリが役に立ったらスターをお願いします！ ⭐**
 
-❤️ で作成 by [Your Name](https://github.com/yourusername)
+❤️ で作成 by [SmartNaviPro Development](https://github.com/smartnavipro-dev)
 
 [🔝 トップに戻る](#-kindle-tts-reader)
 
