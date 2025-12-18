@@ -11,8 +11,8 @@ android {
         applicationId "com.kindletts.reader"
         minSdk 21
         targetSdk 34
-        versionCode 87
-        versionName "1.0.84"
+        versionCode 88
+        versionName "1.1.0"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
@@ -86,6 +86,12 @@ dependencies {
     
     // v1.0.84: WorkManager for quota reset notifications
     implementation 'androidx.work:work-runtime-ktx:2.9.0'
+
+    // v1.1.0: EncryptedSharedPreferences for secure local learning
+    implementation 'androidx.security:security-crypto:1.1.0-alpha06'
+
+    // v1.1.0: Gson for JSON serialization
+    implementation 'com.google.code.gson:gson:2.10.1'
 
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'

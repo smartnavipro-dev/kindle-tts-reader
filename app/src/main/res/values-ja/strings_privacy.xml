@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- プライバシー同意ダイアログ -->
+    <string name="privacy_consent_title">🔒 学習機能について</string>
+    <string name="privacy_consent_message">このアプリは、OCR認識の精度向上のため、あなたの修正内容をローカルに保存します。
+
+✅ データはデバイス内のみに保存
+✅ 外部サーバーには送信しません
+✅ 第三者と共有しません
+✅ いつでも削除できます
+
+収集する情報:
+• OCRテキスト（修正前）
+• 修正後のテキスト
+• 使用回数と日時
+
+収集しない情報:
+• 書籍タイトル、著者名
+• ページ番号、位置情報
+• その他の個人情報
+
+詳細はプライバシーポリシーをご覧ください。</string>
+
+    <string name="privacy_consent_agree">同意する</string>
+    <string name="privacy_consent_disagree">同意しない</string>
+    <string name="privacy_consent_view_policy">ポリシーを見る</string>
+
+    <!-- プライバシーポリシー画面 -->
+    <string name="privacy_policy_title">プライバシーポリシー</string>
+    <string name="privacy_policy_close">閉じる</string>
+    <string name="privacy_policy_agree_and_close">同意して閉じる</string>
+
+    <!-- 設定 - 学習機能セクション -->
+    <string name="settings_learning_category">学習機能 ✨</string>
+    <string name="settings_learning_enabled_title">学習機能を使用する</string>
+    <string name="settings_learning_enabled_summary">OCR認識精度を向上させます</string>
+    <string name="settings_learning_pattern_count_title">学習パターン数</string>
+    <string name="settings_learning_pattern_count_summary">%d件</string>
+    <string name="settings_learning_last_updated_title">最終更新</string>
+    <string name="settings_learning_last_updated_summary">%s</string>
+    <string name="settings_learning_view_policy_title">プライバシーポリシーを見る</string>
+    <string name="settings_learning_view_policy_summary">データの取り扱いについて</string>
+    <string name="settings_learning_delete_data_title">学習データを削除</string>
+    <string name="settings_learning_delete_data_summary">すべての修正履歴を削除</string>
+
+    <!-- 削除確認ダイアログ -->
+    <string name="delete_dialog_title">⚠️ 学習データの削除</string>
+    <string name="delete_dialog_message">すべての学習データを削除します。
+この操作は取り消せません。
+
+削除されるデータ:
+• 修正履歴: %d件
+• 統計情報
+
+削除されないデータ:
+• アプリの設定
+• OCR補正機能（Gemini API）
+
+よろしいですか？</string>
+
+    <string name="delete_dialog_confirm">削除</string>
+    <string name="delete_dialog_cancel">キャンセル</string>
+    <string name="delete_success_message">学習データを削除しました</string>
+
+    <!-- アクセシビリティ -->
+    <string name="privacy_consent_dialog_description">学習機能のプライバシー同意ダイアログ</string>
+    <string name="delete_confirmation_dialog_description">学習データ削除の確認ダイアログ</string>
+</resources>
