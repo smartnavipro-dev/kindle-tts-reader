@@ -36,6 +36,12 @@
         </activity>
 <!-- v1.0.84: Quota管理設定画面 -->        <activity            android:name=".QuotaSettingsActivity"            android:exported="false" />
 
+        <!-- v1.1.0: プライバシーポリシー表示画面 -->
+        <activity
+            android:name=".privacy.PrivacyPolicyActivity"
+            android:exported="false"
+            android:theme="@style/Theme.KindleTTSReader" />
+
         <!-- オーバーレイサービス（画面キャプチャ + OCR + TTS） -->
         <service
             android:name=".OverlayService"

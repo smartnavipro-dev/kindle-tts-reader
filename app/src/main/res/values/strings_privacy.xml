@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Privacy Consent Dialog -->
+    <string name="privacy_consent_title">🔒 About Learning Feature</string>
+    <string name="privacy_consent_message">This app stores your correction history locally to improve OCR recognition accuracy.
+
+✅ Data is stored on your device only
+✅ NOT sent to external servers
+✅ NOT shared with third parties
+✅ Can be deleted anytime
+
+Information collected:
+• OCR text (before correction)
+• Corrected text
+• Usage count and date
+
+Information NOT collected:
+• Book titles, author names
+• Page numbers, location data
+• Other personal information
+
+For details, please see our Privacy Policy.</string>
+
+    <string name="privacy_consent_agree">Agree</string>
+    <string name="privacy_consent_disagree">Disagree</string>
+    <string name="privacy_consent_view_policy">View Policy</string>
+
+    <!-- Privacy Policy Activity -->
+    <string name="privacy_policy_title">Privacy Policy</string>
+    <string name="privacy_policy_close">Close</string>
+    <string name="privacy_policy_agree_and_close">Agree and Close</string>
+
+    <!-- Settings - Learning Feature Section -->
+    <string name="settings_learning_category">Learning Feature ✨</string>
+    <string name="settings_learning_enabled_title">Enable Learning Feature</string>
+    <string name="settings_learning_enabled_summary">Improve OCR recognition accuracy</string>
+    <string name="settings_learning_pattern_count_title">Learned Patterns</string>
+    <string name="settings_learning_pattern_count_summary">%d patterns</string>
+    <string name="settings_learning_last_updated_title">Last Updated</string>
+    <string name="settings_learning_last_updated_summary">%s</string>
+    <string name="settings_learning_view_policy_title">View Privacy Policy</string>
+    <string name="settings_learning_view_policy_summary">See how your data is handled</string>
+    <string name="settings_learning_delete_data_title">Delete Learning Data</string>
+    <string name="settings_learning_delete_data_summary">Delete all correction history</string>
+
+    <!-- Delete Confirmation Dialog -->
+    <string name="delete_dialog_title">⚠️ Delete Learning Data</string>
+    <string name="delete_dialog_message">All learning data will be deleted.
+This action cannot be undone.
+
+Data to be deleted:
+• Correction history: %d patterns
+• Statistics
+
+Data NOT deleted:
+• App settings
+• OCR correction feature (Gemini API)
+
+Are you sure?</string>
+
+    <string name="delete_dialog_confirm">Delete</string>
+    <string name="delete_dialog_cancel">Cancel</string>
+    <string name="delete_success_message">Learning data deleted</string>
+
+    <!-- Privacy Preferences Keys (for SharedPreferences) -->
+    <string name="pref_privacy_name" translatable="false">privacy_prefs</string>
+    <string name="pref_learning_consent" translatable="false">learning_consent_given</string>
+    <string name="pref_consent_date" translatable="false">consent_date</string>
+    <string name="pref_consent_version" translatable="false">consent_policy_version</string>
+    <string name="pref_consent_dialog_shown" translatable="false">consent_dialog_shown</string>
+    <string name="pref_learning_enabled" translatable="false">learning_enabled</string>
+
+    <!-- Accessibility -->
+    <string name="privacy_consent_dialog_description">Privacy consent dialog for learning feature</string>
+    <string name="delete_confirmation_dialog_description">Confirmation dialog for deleting learning data</string>
+</resources>

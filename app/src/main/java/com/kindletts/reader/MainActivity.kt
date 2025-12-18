@@ -30,6 +30,9 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.WorkManager
 import com.kindletts.reader.workers.QuotaResetWorker
 import java.util.concurrent.TimeUnit
+import com.kindletts.reader.privacy.PrivacyConsentDialog
+import com.kindletts.reader.privacy.PrivacyPreferences
+import com.kindletts.reader.privacy.LocalCorrectionManager
 
 class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
@@ -40,6 +43,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     // v1.0.82: QuotaManager
     private lateinit var quotaManager: QuotaManager
     private lateinit var quotaTextView: TextView
+
+    // v1.1.0: LocalCorrectionManager (learning feature)
+    private var localCorrectionManager: LocalCorrectionManager? = null
 
     // 状態管理
     private var isReading = false
@@ -105,9 +111,16 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         updatePermissionButtonStates()
         updateUIState()
 
-        
+
         // v1.0.84: Quota Reset通知WorkManager設定
         setupQuotaResetWorker()
+
+        // v1.1.0: プライバシー同意ダイアログ表示（初回起動時のみ）
+        showPrivacyConsentDialogIfNeeded()
+
+        // v1.1.0: LocalCorrectionManager初期化（同意済みの場合のみ）
+        initializeLocalCorrectionManager()
+
         debugLog("MainActivity initialization completed")
     }
 
@@ -433,6 +446,38 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             .apply()
 
         debugLog("Settings saved")
+    }
+
+    /**
+     * v1.1.0: プライバシー同意ダイアログを表示（初回起動時のみ）
+     */
+    private fun showPrivacyConsentDialogIfNeeded() {
+        PrivacyConsentDialog.showIfNeeded(this) { consented ->
+            debugLog("Privacy consent result: $consented")
+
+            if (consented) {
+                // 同意した場合、LocalCorrectionManagerを初期化
+                initializeLocalCorrectionManager()
+                showToast("学習機能が有効になりました")
+            } else {
+                // 拒否した場合のメッセージ
+                showToast("学習機能は無効です。設定からいつでも変更できます。")
+            }
+        }
+    }
+
+    /**
+     * v1.1.0: LocalCorrectionManagerの初期化
+     */
+    private fun initializeLocalCorrectionManager() {
+        if (PrivacyPreferences.isLearningEnabled(this)) {
+            localCorrectionManager = LocalCorrectionManager.getInstance(this)
+            val patternCount = localCorrectionManager?.getPatternCount() ?: 0
+            debugLog("LocalCorrectionManager initialized with $patternCount patterns")
+        } else {
+            localCorrectionManager = null
+            debugLog("LocalCorrectionManager not initialized (learning disabled)")
+        }
     }
 
     private fun applyTTSSettings() {
