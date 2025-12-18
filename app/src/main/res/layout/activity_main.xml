@@ -248,10 +248,25 @@
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnAccessibility"
-            android:layout_width="match_parent"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginEnd="8dp"
             android:text="@string/accessibility_permission"
             android:backgroundTint="@color/teal_200"
+            android:textColor="@color/black"
+            android:textSize="14sp"
+            style="@style/Widget.Material3.Button.OutlinedButton" />
+
+        <!-- v1.1.0: 設定ボタン -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnSettings"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:text="設定"
+            android:backgroundTint="@color/purple_200"
             android:textColor="@color/black"
             android:textSize="14sp"
             style="@style/Widget.Material3.Button.OutlinedButton" />

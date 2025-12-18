@@ -42,6 +42,12 @@
             android:exported="false"
             android:theme="@style/Theme.KindleTTSReader" />
 
+        <!-- v1.1.0: 設定画面 -->
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:theme="@style/Theme.KindleTTSReader" />
+
         <!-- オーバーレイサービス（画面キャプチャ + OCR + TTS） -->
         <service
             android:name=".OverlayService"
