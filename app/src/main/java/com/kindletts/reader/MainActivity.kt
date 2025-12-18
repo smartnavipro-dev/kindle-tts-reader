@@ -135,6 +135,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         // 権限ボタン（アクセシビリティのみ表示）
         binding.btnAccessibility.setOnClickListener { openAccessibilitySettings() }
+        // v1.1.0: 設定画面への遷移
+        binding.btnSettings.setOnClickListener { openSettings() }
         // v1.0.84: Quota設定画面への遷移
         binding.quotaDisplay.setOnClickListener { openQuotaSettings() }
 
@@ -309,7 +311,17 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val intent = Intent(this, QuotaSettingsActivity::class.java)
         startActivity(intent)
     }
-    
+
+    /**
+     * v1.1.0: 設定画面を開く
+     */
+    private fun openSettings() {
+        debugLog("Opening settings")
+
+        val intent = Intent(this, SettingsActivity::class.java)
+        startActivity(intent)
+    }
+
     /**
      * v1.0.84: Quota Reset通知WorkManagerの設定
      */

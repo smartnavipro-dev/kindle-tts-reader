@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <!-- v1.1.0: 学習機能セクション -->
+    <PreferenceCategory
+        android:key="learning_category"
+        android:title="@string/settings_learning_category">
+
+        <!-- 学習機能の有効/無効 -->
+        <SwitchPreferenceCompat
+            android:key="learning_enabled"
+            android:title="@string/settings_learning_enabled_title"
+            android:summary="@string/settings_learning_enabled_summary"
+            android:defaultValue="false"
+            android:icon="@android:drawable/ic_menu_manage" />
+
+        <!-- 学習パターン数表示 -->
+        <Preference
+            android:key="learning_pattern_count"
+            android:title="@string/settings_learning_pattern_count_title"
+            android:summary="@string/settings_learning_pattern_count_summary"
+            android:selectable="false"
+            android:icon="@android:drawable/ic_menu_info_details" />
+
+        <!-- 最終更新日時表示 -->
+        <Preference
+            android:key="learning_last_updated"
+            android:title="@string/settings_learning_last_updated_title"
+            android:summary="@string/settings_learning_last_updated_summary"
+            android:selectable="false"
+            android:icon="@android:drawable/ic_menu_recent_history" />
+
+        <!-- プライバシーポリシーを見る -->
+        <Preference
+            android:key="view_privacy_policy"
+            android:title="@string/settings_learning_view_policy_title"
+            android:summary="@string/settings_learning_view_policy_summary"
+            android:icon="@android:drawable/ic_menu_view" />
+
+        <!-- 学習データを削除 -->
+        <Preference
+            android:key="delete_learning_data"
+            android:title="@string/settings_learning_delete_data_title"
+            android:summary="@string/settings_learning_delete_data_summary"
+            android:icon="@android:drawable/ic_menu_delete" />
+
+    </PreferenceCategory>
+
+</PreferenceScreen>
