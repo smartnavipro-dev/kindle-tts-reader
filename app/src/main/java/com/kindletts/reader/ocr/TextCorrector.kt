@@ -93,14 +93,14 @@ class TextCorrector(private val context: android.content.Context) {
 
             // 1. 需要パターン（最頻出）
             GeneralizedRule(
-                pattern = Regex("[講書霜艦需能][要婁]"),
+                pattern = Regex("[講書霜艦需能][要婁解]"),
                 correct = "需要",
                 description = "需要の誤認識"
             ),
 
             // 2. 価格パターン（最頻出）
             GeneralizedRule(
-                pattern = Regex("[再価洒偏海済梅恒][格将終]"),
+                pattern = Regex("[再価洒偏海済梅恒順福][格将終稿]"),
                 correct = "価格",
                 description = "価格の誤認識"
             ),
@@ -695,6 +695,31 @@ class TextCorrector(private val context: android.content.Context) {
                 pattern = Regex("環境[くへ]の[悪惑]"),
                 correct = "環境への悪",
                 description = "環境への悪の誤認識"
+            ),
+
+            // ============================================================
+            // 数字パターン（v1.1.1新規追加）
+            // ============================================================
+
+            // 数字1の誤認識（l, I, |）
+            GeneralizedRule(
+                pattern = Regex("(?<=[^a-zA-Z])[lI|](?=[^a-zA-Z])"),
+                correct = "1",
+                description = "数字1の誤認識"
+            ),
+
+            // 数字0の誤認識（O, o）
+            GeneralizedRule(
+                pattern = Regex("(?<=[0-9])[Oo](?=[0-9])"),
+                correct = "0",
+                description = "数字0の誤認識"
+            ),
+
+            // 数字5の誤認識（S）
+            GeneralizedRule(
+                pattern = Regex("(?<=[0-9])S(?=[0-9])"),
+                correct = "5",
+                description = "数字5の誤認識"
             )
         )
 
