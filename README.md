@@ -25,10 +25,13 @@ Kindle TTS Reader transforms your reading experience by automatically reading Ki
 
 - **🔍 OCR Text Recognition** - Extract text from Kindle app using Google ML Kit
 - **🤖 AI-Powered Text Correction** - Gemini 2.5 Flash LLM for high-accuracy OCR correction
+- **🧠 Local Learning System** - Privacy-first pattern learning stored on your device (v1.1.0+)
+- **🔒 Privacy Controls** - Full GDPR-compliant data management with encryption
 - **🔊 Text-to-Speech** - Natural voice synthesis in Japanese and English
 - **📱 Screen Capture** - Real-time screen analysis using MediaProjection API
 - **👆 Auto Page Turn** - Automatic page navigation using AccessibilityService
 - **💫 Overlay UI** - Floating controls over other apps
+- **⚙️ Settings Screen** - Manage learning features and privacy preferences
 - **⚡ Smart Caching** - LRU cache for improved performance and reduced API calls
 
 ---
@@ -61,7 +64,7 @@ Kindle TTS Reader transforms your reading experience by automatically reading Ki
 
 ### **Method 1: Download APK (Recommended)**
 1. Go to [Releases](https://github.com/smartnavipro-dev/kindle-tts-reader/releases/latest)
-2. Download `app-release.apk` (82MB)
+2. Download `kindle-tts-reader-v1.1.0-release.apk` (83MB)
 3. Enable "Unknown Sources" in Android settings
 4. Install the APK
 
@@ -145,8 +148,10 @@ echo "GEMINI_API_KEY=your_api_key_here" >> local.properties
 
 ### **Core Components**
 - **MainActivity**: Main UI and permission management
+- **SettingsActivity**: Privacy controls and learning feature management (v1.1.0+)
 - **OverlayService**: Screen capture + OCR + TTS pipeline
 - **AutoPageTurnService**: Accessibility-based gesture automation
+- **LocalCorrectionManager**: Privacy-first local learning engine (v1.1.0+)
 
 ### **Technology Stack**
 - **Language**: Kotlin 100%
@@ -157,6 +162,8 @@ echo "GEMINI_API_KEY=your_api_key_here" >> local.properties
 - **TTS Engine**: Android TextToSpeech API
 - **Screen Capture**: MediaProjection API
 - **Gestures**: AccessibilityService API
+- **Security**: AndroidX Security Crypto (AES256-GCM encryption) (v1.1.0+)
+- **Data Storage**: EncryptedSharedPreferences with Android Keystore (v1.1.0+)
 
 ### **Architecture Diagram**
 ```
@@ -217,8 +224,13 @@ echo "GEMINI_API_KEY=your_api_key_here" >> local.properties
 - ✅ **No data collection** - Zero personal information stored
 - ✅ **Local OCR processing** - ML Kit works completely offline
 - ✅ **Temporary screen data** - Images processed in memory only
+- ✅ **Local Learning (v1.1.0+)** - All learning data stored on device with AES256-GCM encryption
+  - Learning patterns never leave your device
+  - Full GDPR-compliant data management
+  - One-tap deletion of all learning data
+  - User consent required before activation
 - ⚠️ **Optional AI Enhancement** - Gemini API used for text correction (requires API key)
-  - Only OCR text is sent, not images
+  - Only OCR text is sent, not images or learning data
   - Only sent when OCR confidence is below threshold (0.7)
   - Cached results reduce API calls
   - You control the API key and can disable LLM correction
@@ -227,6 +239,8 @@ echo "GEMINI_API_KEY=your_api_key_here" >> local.properties
 - ✅ **Minimal permissions** - Only essential permissions requested
 - ✅ **Source code available** - Full transparency
 - ✅ **Regular security updates** - Maintained actively
+- ✅ **Hardware-protected keys** - Android Keystore for encryption keys (v1.1.0+)
+- ✅ **Privacy policies** - Comprehensive documentation in English and Japanese (v1.1.0+)
 
 ---
 
@@ -272,16 +286,23 @@ cd kindle-tts-reader
 
 ## 🗺️ **Roadmap**
 
-### **Version 1.1** (Next Month)
-- [ ] Multiple language UI support
+### **Version 1.1** ✅ (Released 2025-12-18)
+- [x] Local learning system with privacy-first design
+- [x] Settings screen with granular controls
+- [x] AES256-GCM encrypted data storage
+- [x] Comprehensive privacy policies (EN/JA)
+- [x] GDPR-compliant consent management
+
+### **Version 1.2** (Q1 2026)
+- [ ] Multiple language UI support (Spanish, French, German)
 - [ ] Reading statistics dashboard
 - [ ] Custom TTS voice options
-- [ ] Enhanced OCR accuracy
+- [ ] Export/import learning patterns
 
 ### **Version 2.0** (Future)
 - [ ] ePub format support
 - [ ] PDF reading capability
-- [ ] Cloud backup & sync
+- [ ] Cloud backup & sync (optional)
 - [ ] Wear OS companion app
 
 ---
@@ -334,6 +355,18 @@ Only the OCR-extracted text (not images or personal data) is sent to Gemini API 
 <summary><strong>Can I use the app without the Gemini API?</strong></summary>
 
 Not currently. The app requires Gemini API for text correction to achieve high accuracy. Future versions may add an offline-only mode with reduced accuracy.
+</details>
+
+<details>
+<summary><strong>What is the local learning feature? (v1.1.0+)</strong></summary>
+
+The local learning system improves OCR accuracy by learning from your corrections. All learning data is stored on your device with AES256-GCM encryption and never sent to external servers. You can enable/disable this feature anytime in Settings, and delete all learning data with one tap.
+</details>
+
+<details>
+<summary><strong>Is the learning data encrypted?</strong></summary>
+
+Yes! All learning patterns are encrypted using AES256-GCM with hardware-protected keys stored in Android Keystore. The data is excluded from cloud backups and can only be accessed by the app on your device.
 </details>
 
 ---
