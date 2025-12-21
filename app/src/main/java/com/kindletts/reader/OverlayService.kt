@@ -566,6 +566,11 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             )
             bitmap.copyPixelsFromBuffer(buffer)
 
+            // ✅ v1.1.4 FIX: バッファコピー後すぐにImageを解放
+            // maxImages制限回避のため、使用後すぐにcloseする必要がある
+            image.close()
+            debugLog("Image closed after buffer copy")
+
             debugLog("Bitmap created", "Time: ${System.currentTimeMillis() - startTime}ms")
 
             val croppedBitmap = Bitmap.createBitmap(bitmap, 0, 0, screenWidth, screenHeight)
@@ -580,6 +585,13 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             return processedBitmap
 
         } catch (e: Exception) {
+            // エラー時もImageを確実に解放
+            try {
+                image.close()
+                debugLog("Image closed in catch block after error")
+            } catch (closeError: Exception) {
+                debugLog("Error closing image in catch block", closeError.message)
+            }
             handleError("ビットマップ変換エラー", e)
             return null
         }
